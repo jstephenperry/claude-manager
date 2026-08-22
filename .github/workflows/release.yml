@@ -45,6 +45,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate SHA-256 checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          sha256sum *.exe *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Upload artifacts to the workflow run
         uses: actions/upload-artifact@v4
         with:
@@ -53,6 +60,7 @@ jobs:
             dist/*.exe
             dist/*.zip
             dist/*.blockmap
+            dist/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Publish release
@@ -65,6 +73,7 @@ jobs:
             dist/*.exe
             dist/*.zip
             dist/*.blockmap
+            dist/SHA256SUMS.txt
           body: |
             ## Downloads
 
@@ -76,7 +85,10 @@ jobs:
 
             > These builds are **not code-signed**. Windows SmartScreen will show
             > "Windows protected your PC" on first run — choose **More info** →
-            > **Run anyway**. Verify the SHA-256 below if you want to confirm the
-            > download matches what CI produced.
+            > **Run anyway**.
+
+            `SHA256SUMS.txt` lists the checksum of every artifact, produced by
+            the same workflow run that built them. Verify a download with
+            `sha256sum -c SHA256SUMS.txt` (or `Get-FileHash` on Windows).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
