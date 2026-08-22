@@ -1,0 +1,97 @@
+{
+  "name": "claude-manager",
+  "productName": "Claude Manager",
+  "version": "0.1.0",
+  "description": "Browse and clean up Claude Code's local data — session transcripts, project memories, scratchpads, and the storage that accumulates under ~/.claude",
+  "type": "module",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "author": {
+    "name": "Stephen Perry"
+  },
+  "homepage": "https://github.com/jstephenperry/claude-manager",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jstephenperry/claude-manager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jstephenperry/claude-manager/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "electron",
+    "session-manager",
+    "cleanup"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "icon": "node scripts/make-icon.mjs",
+    "test": "node scripts/t-trash.mjs && node scripts/t-sweep.mjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win",
+    "release": "electron-builder --win --publish always"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "dev.stephenperry.claude-manager",
+    "productName": "Claude Manager",
+    "copyright": "Copyright © 2026 Stephen Perry",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Claude Manager",
+      "artifactName": "${productName}-${version}-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "jstephenperry",
+        "repo": "claude-manager"
+      }
+    ]
+  }
+}

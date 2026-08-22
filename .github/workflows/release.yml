@@ -1,0 +1,82 @@
+name: Release
+
+# Builds the Windows artifacts and attaches them to a GitHub Release.
+# Trigger by pushing a version tag:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# `workflow_dispatch` allows a manual run for testing the build without
+# publishing a release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate application icon
+        run: npm run icon
+
+      - name: Run sandboxed tests
+        run: node scripts/t-trash.mjs
+
+      - name: Build Windows artifacts
+        run: npx electron-builder --win --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts to the workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.blockmap
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.blockmap
+          body: |
+            ## Downloads
+
+            | File | Use |
+            | --- | --- |
+            | `Claude Manager-*-Setup.exe` | Installer — Start Menu and desktop shortcuts, uninstaller |
+            | `Claude Manager-*-portable.exe` | Single executable, no install |
+            | `Claude Manager-*-x64.zip` | Unpacked build |
+
+            > These builds are **not code-signed**. Windows SmartScreen will show
+            > "Windows protected your PC" on first run — choose **More info** →
+            > **Run anyway**. Verify the SHA-256 below if you want to confirm the
+            > download matches what CI produced.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

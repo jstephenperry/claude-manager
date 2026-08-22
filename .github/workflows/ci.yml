@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Syntax-check every source file
+        shell: bash
+        run: |
+          fail=0
+          for f in $(find src scripts -name '*.js' -o -name '*.cjs' -o -name '*.mjs'); do
+            node --check "$f" || { echo "SYNTAX FAIL: $f"; fail=1; }
+          done
+          exit $fail
+
+      # The trash suite runs entirely inside a temporary CLAUDE_CONFIG_DIR, so
+      # it is safe on a runner with no Claude Code data of its own.
+      - name: Trash, restore, purge and path-guard suite
+        run: node scripts/t-trash.mjs
+
+      - name: Icon generation
+        run: npm run icon
