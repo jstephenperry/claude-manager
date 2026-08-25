@@ -10,6 +10,7 @@ import { scanProjects, readLiveSessions } from './scanner.js';
 import { scanCruft } from './cruft.js';
 import { readTranscript } from './transcript.js';
 import { readMemoryDir, writeMemory } from './memories.js';
+import { planIndexRepairs, applyIndexRepairs } from './repair.js';
 import { trashItem, listTrash, restoreEntry, purgeEntry, purgeAll, trashSize } from './trash.js';
 import { scanScratchpads, listDir, readScratchFile } from './scratchpads.js';
 import { planSweep, SWEEP_CATEGORIES } from './sweep.js';
@@ -118,6 +119,34 @@ export function registerIpc() {
     if (!isInsideClaudeRoot(file)) throw new Error('Refusing to write outside the Claude data directory.');
     await writeMemory(file, text);
     return true;
+  });
+
+  // ---- MEMORY.md repair ----------------------------------------------------
+
+  /**
+   * What an index line points at once it has been deleted is the app's own
+   * doing, so the planner is told what is already in the trash and, for a
+   * delete that has not happened yet, what is about to join it.
+   */
+  async function trashedPaths() {
+    const entries = await listTrash();
+    return entries.flatMap((e) =>
+      (e.paths || []).map((p) => ({ path: p.from, label: e.label, deletedAt: e.deletedAt, id: e.id }))
+    );
+  }
+
+  ipcMain.handle('memory:repairPlan', async (_e, { dir, removedFiles } = {}) => {
+    if (!isInsideClaudeRoot(dir)) throw new Error('Refusing to read outside the Claude data directory.');
+    const removed = (removedFiles || []).filter((f) => isInsideClaudeRoot(f));
+    const memory = await readMemoryDir(dir);
+    return planIndexRepairs(memory, { trashed: await trashedPaths(), removedFiles: removed });
+  });
+
+  ipcMain.handle('memory:repairApply', async (_e, { dir, ids } = {}) => {
+    if (!isInsideClaudeRoot(dir)) throw new Error('Refusing to write outside the Claude data directory.');
+    const result = await applyIndexRepairs(dir, { ids, trashed: await trashedPaths() });
+    if (result.changed) await fullScan();
+    return result;
   });
 
   // ---- deletion -----------------------------------------------------------

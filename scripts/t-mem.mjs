@@ -5,6 +5,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { readMemoryDir } from '../src/main/memories.js';
+import { planIndexRepairs } from '../src/main/repair.js';
 import { PROJECTS_DIR } from '../src/main/paths.js';
 
 async function discoverMemoryDirs() {
@@ -45,4 +46,15 @@ for (const dir of targets) {
   }
   if (r.index) console.log(`  index: ${r.index.entries.map((e) => e.file).join(', ') || '(no entries)'}`);
   console.log(`  issues: ${r.issues.length ? r.issues.map((i) => `${i.kind}(${i.file || ''})`).join(', ') : '(none)'}`);
+
+  // What the repair pass would propose for the orphaned links. Planning only:
+  // nothing here writes to MEMORY.md.
+  const plan = planIndexRepairs(r);
+  if (plan.actions.length || plan.manual.length) {
+    console.log(`  repairs: ${plan.counts.auto} safe, ${plan.counts.total - plan.counts.auto} to review, ${plan.counts.manual} by hand`);
+    for (const a of plan.actions) {
+      console.log(`    [${a.confidence}] ${a.kind} line ${a.lineNo}: ${a.file}${a.target ? ` -> ${a.target}` : ''}`);
+    }
+    for (const m of plan.manual) console.log(`    [manual] line ${m.lineNo}: ${m.file}`);
+  }
 }

@@ -56,6 +56,34 @@ show you:
 | `duplicate-name` | Two files declare the same `name:` |
 | `no-frontmatter` / `missing-name` / `empty` | Malformed or content-free |
 
+Orphaned index links are the one kind of drift with a mechanical fix, so they
+are not only reported — **Repair MEMORY.md** works out what each broken link
+should say and shows the edit line by line before writing anything:
+
+- A file that is plainly still there is **repointed** — a stray `memory/`
+  prefix, a missing `.md`, the wrong case, an escaped space, or a renamed file
+  that still declares the `name:` the index knows it by. Anchors and link
+  titles survive the rewrite.
+- A link into this app's own trash is **dropped**, because the file it named
+  went through a delete here and restoring it from the Trash tab brings the
+  line back.
+- A guess — a name a couple of characters off, or a candidate that already has
+  its own index line — is offered but never pre-selected.
+- A link mid-sentence, or one of several on a line, is left alone and reported
+  as needing a manual edit, since deleting the line would take somebody's prose
+  with it.
+
+Edits are minimal: a repoint rewrites the characters inside the parentheses and
+nothing else, a removal drops one list item or table row, and line endings are
+preserved. Nothing is written until you apply, and **Undo** restores the file
+byte for byte. Links that already resolve — `./notes.md`, `../CLAUDE.md`,
+`notes%20.md` — are not touched, and are no longer reported as broken either.
+
+Deleting a memory orphans its index line, so a delete offers to take the line
+with it: the confirmation dialog lists every line it would drop, and the edit
+happens only for the files that actually reached the trash. Turn it off with
+*Fix index on delete* in the Memories tab.
+
 **Scratchpads** — the working directories Claude Code gives each session under
 the OS temp folder (`<tmp>/claude/<project>/<session-id>/{scratchpad,tasks}`),
 which nothing ever prunes. Browse the files in place with a lazy directory tree
@@ -162,6 +190,7 @@ src/main/        Electron main process — all filesystem access
   paths.js       ~/.claude layout, project-name encoding, the delete guard
   scanner.js     builds the project/session index (cached by size+mtime)
   memories.js    frontmatter parsing and memory health diagnosis
+  repair.js      MEMORY.md orphaned-link repair (plans; applies only what it is given)
   transcript.js  .jsonl -> renderable entries, with block clipping
   cruft.js       ancillary storage and orphan detection
   scratchpads.js the temp-folder scratchpad tree, browsing and previews
@@ -205,6 +234,7 @@ git push --follow-tags
 ```
 node scripts/t-trash.mjs    # delete/restore/purge/conflict/guard, in a temp sandbox
 node scripts/t-mem.mjs      # frontmatter, index, and issue detection on real data
+node scripts/t-memfix.mjs   # orphaned-link diagnosis and MEMORY.md repair, in a temp sandbox
 node scripts/t-scan.mjs     # full scan summary
 node scripts/t-read.mjs     # transcript parsing + cruft scan
 node scripts/t-sweep.mjs    # scratchpad scan, managed-root guard, sweep plans
