@@ -21,8 +21,35 @@ const shortName = (p) => p.realPath.split(/[\\/]/).filter(Boolean).pop() || p.id
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const samePath = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
+/**
+ * The whole pane is rebuilt on every store change, which parks the scroll back
+ * at the top. That is right when the scope changes and wrong for everything
+ * else -- ticking a repair checkbox should not throw the list back to the top --
+ * so the offset is carried across renders of the same scope.
+ */
+let scrollMemo = { key: null, top: 0 };
+
 export function renderMemories(root) {
+  const key = `${store.projectId || '*'}|${store.memoryFilter}`;
+  const previous = root.querySelector('.pane-body');
+  if (previous && scrollMemo.key === key) scrollMemo.top = previous.scrollTop;
+
   mount(root, sidebar(), pane());
+
+  const body = root.querySelector('.pane-body');
+  if (body && scrollMemo.key === key) body.scrollTop = scrollMemo.top;
+  else scrollMemo = { key, top: 0 };
+
+  // A panel that opens below a screen and a half of health report has, from
+  // where the user is sitting, not opened at all.
+  if (store.memoryRepair?.reveal) {
+    store.memoryRepair.reveal = false; // one-shot, and not worth a re-render
+    const card = root.querySelector('.repair-card');
+    if (card && body) {
+      card.scrollIntoView({ block: 'start' });
+      scrollMemo.top = body.scrollTop;
+    }
+  }
 }
 
 function sidebar() {
@@ -142,8 +169,8 @@ ${scope.memory.path}`,
 
   const body = el('div', { class: 'pane-body' });
 
-  if (issues.length) body.append(issuesCard(issues));
   if (store.memoryRepair) body.append(repairCard());
+  if (issues.length) body.append(issuesCard(issues));
 
   if (!filtered.length) {
     body.append(files.length
@@ -213,9 +240,12 @@ function issuesCard(issues) {
  */
 async function openRepair(projects, focus) {
   const targets = projects.filter((p) => p.memory?.exists && p.memory.hasIndex);
-  if (!targets.length) return;
+  if (!targets.length) {
+    toast('There is no MEMORY.md in scope to repair.', 'err');
+    return;
+  }
 
-  set({ memoryRepair: { loading: true, plans: [], chosen: new Set(), results: null } });
+  set({ memoryRepair: { loading: true, plans: [], chosen: new Set(), results: null, reveal: true } });
   const plans = [];
   for (const p of targets) {
     try {
@@ -235,7 +265,7 @@ async function openRepair(projects, focus) {
       if (wanted) chosen.add(repairKey(plan.dir, a.id));
     }
   }
-  set({ memoryRepair: { loading: false, plans, chosen, results: null } });
+  set({ memoryRepair: { loading: false, plans, chosen, results: null, reveal: true } });
 }
 
 function repairCard() {
@@ -243,7 +273,7 @@ function repairCard() {
   const close = el('button', { class: 'btn btn-sm', onclick: () => set({ memoryRepair: null }) }, 'Close');
 
   if (r.loading) {
-    return el('div', { class: 'card' }, el('h3', {}, el('span', { class: 'spinning' }, '⟳'), 'Reading MEMORY.md…'));
+    return el('div', { class: 'card repair-card' }, el('h3', {}, el('span', { class: 'spinning' }, '⟳'), 'Reading MEMORY.md…'));
   }
   if (r.results) return repairResultCard(r.results);
 
@@ -251,7 +281,7 @@ function repairCard() {
   const manual = r.plans.flatMap((p) => p.manual.map((m) => ({ plan: p, m })));
 
   if (!actions.length && !manual.length) {
-    return el('div', { class: 'card' },
+    return el('div', { class: 'card repair-card' },
       el('h3', {}, 'Nothing to repair'),
       el('div', { class: 'desc' }, 'Every link in MEMORY.md resolves to a file that is there.'),
       close);
@@ -267,7 +297,7 @@ function repairCard() {
     },
   });
 
-  return el('div', { class: 'card', style: { borderColor: 'var(--accent-line)' } },
+  return el('div', { class: 'card repair-card', style: { borderColor: 'var(--accent-line)' } },
     el('h3', {}, 'Repair MEMORY.md',
       el('span', { class: 'badge badge-mute' }, plural(actions.length, 'orphaned link', 'orphaned links')),
       manual.length ? el('span', { class: 'badge badge-warn' }, `${manual.length} by hand`) : null),
@@ -355,7 +385,7 @@ function repairResultCard(results) {
   const skipped = results.flatMap((r) => r.skipped || []);
   const failed = results.filter((r) => r.error);
 
-  return el('div', { class: 'card', style: { borderColor: 'var(--accent-line)' } },
+  return el('div', { class: 'card repair-card', style: { borderColor: 'var(--accent-line)' } },
     el('h3', {}, changed.length ? 'MEMORY.md updated' : 'Nothing changed'),
     el('div', { class: 'desc' },
       changed.length
@@ -423,7 +453,7 @@ async function applyRepairs() {
   }
   for (const f of results.filter((x) => x.error)) toast(f.error, 'err');
 
-  set({ memoryRepair: { loading: false, plans: [], chosen: new Set(), results } });
+  set({ memoryRepair: { loading: false, plans: [], chosen: new Set(), results, reveal: true } });
   window.dispatchEvent(new CustomEvent('cm:rescan'));
 }
 
@@ -593,7 +623,7 @@ async function deleteSelected(files) {
   const dropped = repairs.reduce((n, r) => n + (r.removed || 0), 0);
   if (dropped) {
     toast(`MEMORY.md updated — ${plural(dropped, 'orphaned index line dropped', 'orphaned index lines dropped')}.`, 'ok');
-    set({ memoryRepair: { loading: false, plans: [], chosen: new Set(), results: repairs } });
+    set({ memoryRepair: { loading: false, plans: [], chosen: new Set(), results: repairs, reveal: true } });
   }
 
   reportResults(results, 'memory');

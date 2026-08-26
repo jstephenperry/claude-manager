@@ -124,11 +124,14 @@ function findCandidate(entry, files, indexed) {
     return { file: takenStrong[0], via: 'duplicate', confidence: 'low', alternatives: [] };
   }
 
-  // Last resort: a near-miss filename, always offered as a guess.
+  // Last resort: a near-miss filename, always offered as a guess. The distance
+  // has to be small relative to the name as well as absolutely -- two edits
+  // turn `gone-0` into `note-0`, which is a different memory, not a typo.
   if (targetSlug.length >= 4) {
+    const budget = Math.min(2, Math.max(1, Math.floor(targetSlug.length * 0.25)));
     const scored = free
       .map((f) => ({ f, d: Math.min(distance(targetSlug, slugify(f.name)), distance(targetSlug, slugify(f.slug))) }))
-      .filter((x) => x.d <= 2)
+      .filter((x) => x.d <= budget)
       .sort((a, b) => a.d - b.d);
     if (scored.length && (scored.length === 1 || scored[0].d < scored[1].d)) {
       return {
@@ -257,8 +260,11 @@ export function planIndexRepairs(memory, opts = {}) {
       ...shared,
       id: `remove:${entry.line}:${entry.start}`,
       kind: 'remove',
-      confidence: gone ? 'high' : 'low',
-      auto: Boolean(gone),
+      // A removal is settled by evidence rather than resemblance: the file is
+      // not in the directory under any spelling, and nothing exists at the
+      // path the link writes out. Guesses are the repoints above, not this.
+      confidence: 'high',
+      auto: true,
       after: null,
       target: '',
       via: gone ? (gone.pending ? 'deleting' : 'trashed') : 'absent',
@@ -267,7 +273,7 @@ export function planIndexRepairs(memory, opts = {}) {
         ? gone.pending
           ? `${entry.file} is being moved to the trash, so this line is about to point at nothing.`
           : `${entry.file} is in this app's trash (${new Date(gone.deletedAt).toLocaleDateString()}). Restore it from the Trash tab to bring the memory back; this line goes with it.`
-        : `Nothing in this directory looks like ${entry.file}. Deleting the line drops a pointer to a file that is not here — check it is not simply somewhere else first.`,
+        : `No file here is named ${entry.baseName || entry.file}, nothing exists at ${entry.normalized || entry.file}, and no other memory resembles it. The line points at nothing.`,
     });
   }
 
