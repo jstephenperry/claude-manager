@@ -1,7 +1,7 @@
 {
   "name": "claude-manager",
   "productName": "Claude Manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Browse and clean up Claude Code's local data — session transcripts, project memories, scratchpads, and the storage that accumulates under ~/.claude",
   "type": "module",
   "main": "src/main/main.js",
