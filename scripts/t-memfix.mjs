@@ -130,7 +130,8 @@ ok('  never pre-selected', typo?.auto === false);
 
 const absent = find('old-thing.md');
 ok('no candidate -> remove the line', absent?.kind === 'remove' && absent.after === null);
-ok('  low confidence: the file may just be elsewhere', absent?.confidence === 'low' && absent.auto === false);
+ok('  settled by evidence, so pre-selected', absent?.confidence === 'high' && absent.auto === true);
+ok('  reason states what was checked', /nothing exists at/.test(absent?.reason || ''));
 
 const trashed = find('trashed-note.md');
 ok('link into our own trash -> remove', trashed?.kind === 'remove' && trashed.via === 'trashed');
@@ -140,7 +141,21 @@ ok('  reason names the trash', /trash/i.test(trashed?.reason || ''));
 ok('table row is deletable', find('gone-table.md')?.kind === 'remove');
 ok('link inside prose is left to a human', plan.manual.some((m) => m.file === 'gone-notes.md'));
 ok('two links on one line are left to a human', plan.manual.filter((m) => ['gone-a.md', 'gone-b.md'].includes(m.file)).length === 2);
-ok('counts add up', plan.counts.total === plan.actions.length && plan.counts.auto === 4 && plan.counts.manual === 3);
+ok('counts add up', plan.counts.total === plan.actions.length && plan.counts.auto === 6 && plan.counts.manual === 3);
+ok('guesses stay unticked', plan.actions.filter((a) => a.via === 'similar' || a.via === 'duplicate').every((a) => !a.auto));
+
+// Two edits inside a six-character name is a different memory, not a typo:
+// `gone-0` must not be "repaired" into `note-0`.
+const shortDir = path.join(sandbox, 'projects', 'X--test', 'short');
+await fs.mkdir(shortDir, { recursive: true });
+await fs.writeFile(path.join(shortDir, 'note-0.md'), '---\nname: note-0\n---\n\nUnrelated.\n', 'utf8');
+await fs.writeFile(path.join(shortDir, 'build-quirk.md'), '---\nname: build-quirk\n---\n\nOne letter off.\n', 'utf8');
+await fs.writeFile(path.join(shortDir, 'MEMORY.md'),
+  '- [Gone 0](gone-0.md)\n- [Build quirks](build-quirks.md)\n', 'utf8');
+const shortPlan = planIndexRepairs(await readMemoryDir(shortDir), {});
+const shortByFile = new Map(shortPlan.actions.map((a) => [a.file, a]));
+ok('two edits in a short name is not a typo', shortByFile.get('gone-0.md')?.kind === 'remove');
+ok('one edit in a long name still is', shortByFile.get('build-quirks.md')?.kind === 'repoint');
 
 // A delete can preview its own damage: pretend session-log.md is going away.
 const pre = planIndexRepairs(read, { removedFiles: [path.join(dir, 'session-log.md')] });
@@ -152,25 +167,26 @@ ok('  and says why', /moved to the trash/.test(pending?.reason || ''));
 
 const auto = plan.actions.filter((a) => a.auto).map((a) => a.id);
 const r1 = await applyIndexRepairs(dir, { ids: auto, trashed: [{ path: path.join(dir, 'trashed-note.md'), deletedAt: trashedAt }] });
-ok('applied every pre-selected repair', r1.changed && r1.applied.length === 4 && r1.skipped.length === 0);
-ok('  3 repointed, 1 removed', r1.repointed === 3 && r1.removed === 1);
+ok('applied every pre-selected repair', r1.changed && r1.applied.length === 6 && r1.skipped.length === 0);
+ok('  3 repointed, 3 removed', r1.repointed === 3 && r1.removed === 3);
 
 const after = await fs.readFile(indexPath, 'utf8');
 const lines = after.split('\r\n');
 ok('CRLF endings preserved', after.includes('\r\n') && !/[^\r]\n/.test(after));
-ok('one line shorter', lines.length === INDEX_LINES.length - 1);
+ok('three lines shorter', lines.length === INDEX_LINES.length - 3);
 ok('deploy prefix fixed', lines.includes('- [Deploy](deploy.md) — stray directory prefix'));
 ok('extension added, title kept', lines.includes('- [Deploy runbook](deploy.md "the runbook") — missing extension, keeps its title'));
 ok('rename repointed with its anchor', lines.includes('- [Build quirks](build-quirks-v2.md#gotchas) — renamed file, keeps its anchor'));
 ok('trashed line gone', !after.includes('trashed-note.md'));
+ok('dead lines gone', !after.includes('old-thing.md') && !after.includes('gone-table.md'));
 ok('healthy lines untouched', lines.includes('- [Session log](session-log.md) — healthy') && lines.includes('- [Docs](https://example.com/docs) — external, not a memory'));
-ok('low-confidence lines left alone', after.includes('old-thing.md') && after.includes('api-notez.md'));
+ok('the guess is left alone', after.includes('api-notez.md'));
 ok('fenced example untouched', after.includes('- [Example](never-written.md)'));
 ok('headings intact', lines.filter((l) => l.startsWith('## ')).length === 4);
 
 const read2 = await readMemoryDir(dir);
 const dangling2 = read2.issues.filter((i) => i.kind === 'dangling-index');
-ok('4 fewer orphaned links', dangling2.length === dangling.length - 4);
+ok('6 fewer orphaned links', dangling2.length === dangling.length - 6);
 ok('repointed files now count as indexed', !read2.issues.some((i) => i.kind === 'unindexed' && ['deploy.md', 'build-quirks-v2.md'].includes(i.file)));
 
 // Applying again with nothing selected is a no-op, not a rewrite.
@@ -181,8 +197,8 @@ ok('  file byte-identical', (await fs.readFile(indexPath, 'utf8')) === after);
 // --- guards ----------------------------------------------------------------
 
 const stalePlan = planIndexRepairs(read2, {});
-const staleId = stalePlan.actions.find((a) => a.file === 'old-thing.md').id;
-await fs.writeFile(indexPath, after.replace('- [Old thing](old-thing.md)', '- [Old thing, edited elsewhere](old-thing.md)'), 'utf8');
+const staleId = stalePlan.actions.find((a) => a.file === 'api-notez.md').id;
+await fs.writeFile(indexPath, after.replace('- [API notez](api-notez.md)', '- [API notez, edited elsewhere](api-notez.md)'), 'utf8');
 const r3 = await applyIndexRepairs(dir, { ids: [staleId] });
 ok('an edit that landed underneath the preview is skipped, not applied', !r3.changed && r3.skipped.length === 1);
 ok('  and says so', /changed|not what the preview/i.test(r3.skipped[0].reason));
