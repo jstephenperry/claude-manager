@@ -163,8 +163,24 @@ export async function purgeAll() {
   return { purged: count, bytes };
 }
 
+/**
+ * What the trash holds, from the manifest rather than a walk of the directory.
+ *
+ * Every entry recorded its measured size when it was moved, so the total is
+ * arithmetic over a file we already read -- and it no longer costs a recursive
+ * walk of everything ever deleted, on every scan, growing with the trash.
+ * `measureTrash` remains for the rare caller that wants the true on-disk size.
+ */
 export async function trashSize() {
-  const { bytes } = await measure(TRASH_DIR);
   const manifest = await readManifest();
-  return { bytes, count: manifest.entries.length };
+  return {
+    bytes: manifest.entries.reduce((n, e) => n + (e.bytes || 0), 0),
+    count: manifest.entries.length,
+  };
+}
+
+/** The trash's real size on disk, walk and all. */
+export async function measureTrash() {
+  const { bytes } = await measure(TRASH_DIR);
+  return bytes;
 }

@@ -274,6 +274,27 @@ export async function readMemoryDir(memoryDir, knownSessionIds = new Set()) {
   return { exists: true, path: memoryDir, files, index: indexEntry, issues, bytes };
 }
 
+/**
+ * The one memory issue that depends on something outside its own directory: a
+ * memory here routinely records an origin session that lives in another
+ * project, so deleting sessions anywhere can make these appear or disappear.
+ * Exported so a refresh scoped to one project can re-derive it from the
+ * surviving session ids alone, without re-reading a file.
+ */
+export function staleOriginIssues(files, knownSessionIds) {
+  if (!knownSessionIds || knownSessionIds.size === 0) return [];
+  return files
+    .filter((f) => f.originSessionId && !knownSessionIds.has(f.originSessionId))
+    .map((f) => ({
+      kind: 'stale-origin',
+      severity: 'info',
+      title: 'Origin session is gone',
+      detail: `${f.name} records originSessionId ${f.originSessionId.slice(0, 8)}…, but that transcript no longer exists.`,
+      paths: [],
+      file: f.name,
+    }));
+}
+
 function diagnose(files, index, knownSessionIds, memoryDir) {
   const issues = [];
   const byFileName = new Map(files.map((f) => [f.name.toLowerCase(), f]));
@@ -353,21 +374,9 @@ function diagnose(files, index, knownSessionIds, memoryDir) {
       });
     }
 
-    if (
-      f.originSessionId &&
-      knownSessionIds.size > 0 &&
-      !knownSessionIds.has(f.originSessionId)
-    ) {
-      issues.push({
-        kind: 'stale-origin',
-        severity: 'info',
-        title: 'Origin session is gone',
-        detail: `${f.name} records originSessionId ${f.originSessionId.slice(0, 8)}…, but that transcript no longer exists.`,
-        paths: [],
-        file: f.name,
-      });
-    }
   }
+
+  issues.push(...staleOriginIssues(files, knownSessionIds));
 
   // Wikilinks that resolve to nothing. Checked after every slug is registered.
   for (const f of files) {

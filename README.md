@@ -137,6 +137,39 @@ Three safeguards:
   `tool-results/` and `subagents/` sidecar directory, and its `file-history/`
   and `session-env/` entries — all listed in the confirmation dialog.
 
+## Refreshing after a change
+
+A full scan re-derives every project, the ancillary directories and the
+scratchpad tree. On a well-used machine that is over a second of walking, and
+a delete used to pay it three times over — once in the delete handler, once in
+the MEMORY.md repair that followed, once more when the window asked for a
+refresh. Deleting one memory took about four seconds, of which twenty
+milliseconds was work.
+
+So a change now says what it touched, and `indexer.js` rebuilds that much:
+
+| Change | What is re-read |
+| --- | --- |
+| A memory, or a MEMORY.md repair | that one project directory |
+| A session | its project, plus the ancillary directories its satellites lived in |
+| A whole project | it is dropped from the index; ancillary directories re-read |
+| Purging trash | nothing on disk — the totals are manifest arithmetic |
+
+`stale-origin` is the one diagnosis that crosses project boundaries, since a
+memory here can record an origin session that lives elsewhere. It is re-derived
+for every project whenever the surviving session set changes — but only that
+one issue kind, from memories already in hand, so it costs no I/O.
+
+The window then reads the index the change already refreshed instead of asking
+for another scan, and rapid changes coalesce into one refresh rather than
+stacking. **Refresh** (and Ctrl-R) still re-reads everything from disk, which
+is what you want after Claude Code — or anything else — has changed the tree
+from outside the app.
+
+`scripts/t-bench.mjs` times a scan against your own `~/.claude` and checks the
+invariant that makes this safe: after any scoped refresh the index must equal
+what a full scan would have produced.
+
 ## Finding things on disk
 
 Every session, memory, project, and cleanup item has **Open** (containing
@@ -191,6 +224,7 @@ src/main/        Electron main process — all filesystem access
   scanner.js     builds the project/session index (cached by size+mtime)
   memories.js    frontmatter parsing and memory health diagnosis
   repair.js      MEMORY.md orphaned-link repair (plans; applies only what it is given)
+  indexer.js     keeps the scanned index current — in whole, or in the part a change touched
   transcript.js  .jsonl -> renderable entries, with block clipping
   cruft.js       ancillary storage and orphan detection
   scratchpads.js the temp-folder scratchpad tree, browsing and previews
@@ -235,6 +269,7 @@ git push --follow-tags
 node scripts/t-trash.mjs    # delete/restore/purge/conflict/guard, in a temp sandbox
 node scripts/t-mem.mjs      # frontmatter, index, and issue detection on real data
 node scripts/t-memfix.mjs   # orphaned-link diagnosis and MEMORY.md repair, in a temp sandbox
+node scripts/t-bench.mjs    # scan timings on your own tree, and scoped-refresh correctness
 node scripts/t-scan.mjs     # full scan summary
 node scripts/t-read.mjs     # transcript parsing + cruft scan
 node scripts/t-sweep.mjs    # scratchpad scan, managed-root guard, sweep plans

@@ -23,13 +23,37 @@ const tabsRoot = document.getElementById('tabs');
 const statRoot = document.getElementById('stat-strip');
 const refreshBtn = document.getElementById('refresh');
 
-async function rescan() {
-  if (store.loading) return;
+/**
+ * Scans are coalesced and serialised. A delete followed by an index repair used
+ * to fire two of these on top of the one the handlers had already run; dropping
+ * the second while the first was in flight lost its result instead. Now a burst
+ * collapses into one scan, and none is thrown away.
+ *
+ * `force` re-reads the tree from disk. Without it the main process returns the
+ * index it already refreshed when it made the change, which is what every
+ * post-mutation refresh wants.
+ */
+let scanTimer = null;
+let scanChain = Promise.resolve();
+let wantForce = false;
+
+function requestScan(force = false) {
+  wantForce = wantForce || force;
+  if (scanTimer) return;
+  scanTimer = setTimeout(() => {
+    scanTimer = null;
+    const forceThisRun = wantForce;
+    wantForce = false;
+    scanChain = scanChain.then(() => rescan(forceThisRun)).catch(() => {});
+  }, 40);
+}
+
+async function rescan(force = false) {
   set({ loading: true });
   refreshBtn.querySelector('.spin-target').classList.add('spinning');
   try {
     const [scan, trash, settings, cats] = await Promise.all([
-      window.api.scan(),
+      window.api.scan(force),
       window.api.trashList(),
       window.api.getSettings(),
       window.api.sweepCategories(),
@@ -148,15 +172,17 @@ async function maybeLaunchSweep() {
 }
 
 subscribe(render);
-refreshBtn.addEventListener('click', rescan);
-window.addEventListener('cm:rescan', rescan);
+// The button and Ctrl-R mean "re-read the disk"; a rescan after one of our own
+// changes just wants the index the main process already brought up to date.
+refreshBtn.addEventListener('click', () => requestScan(true));
+window.addEventListener('cm:rescan', () => requestScan(false));
 
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
     e.preventDefault();
-    rescan();
+    requestScan(true);
   }
 });
 
 render();
-rescan();
+requestScan(true);
