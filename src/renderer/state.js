@@ -11,6 +11,7 @@ export const store = {
   openSession: null,
   openMemory: null,
   memoryFilter: 'all',
+  memoryRepair: null,     // the MEMORY.md repair panel: plans, selection, result
   scratchProject: null,   // scratchpad view scope
   openScratch: null,      // scratchpad file being previewed
   settings: null,

@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('api', {
   readMemoryDir: (dir) => call('memory:read', { dir }),
   readMemoryFile: (file) => call('memory:readFile', { file }),
   writeMemoryFile: (file, text) => call('memory:writeFile', { file, text }),
+  memoryRepairPlan: (dir, removedFiles) => call('memory:repairPlan', { dir, removedFiles }),
+  memoryRepairApply: (dir, ids) => call('memory:repairApply', { dir, ids }),
 
   deleteSessions: (ids) => call('delete:sessions', { ids }),
   deleteMemories: (files) => call('delete:memories', { files }),

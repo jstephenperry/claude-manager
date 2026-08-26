@@ -33,12 +33,16 @@ export async function readJsonSafe(p, fallback = null) {
   }
 }
 
-/** Write JSON atomically: temp file in the same directory, then rename over. */
-export async function writeJsonAtomic(p, value) {
+/** Write text atomically: temp file in the same directory, then rename over. */
+export async function writeTextAtomic(p, text) {
   await fs.mkdir(path.dirname(p), { recursive: true });
   const tmp = p + '.tmp-' + process.pid;
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+  await fs.writeFile(tmp, text, 'utf8');
   await fs.rename(tmp, p);
+}
+
+export async function writeJsonAtomic(p, value) {
+  await writeTextAtomic(p, JSON.stringify(value, null, 2));
 }
 
 /** Recursive size + file count of a path. Returns zeros for anything missing. */

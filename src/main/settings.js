@@ -9,6 +9,10 @@ const DEFAULTS = {
   sweepDays: 60,
   sweepCategories: ['sessions', 'scratchpads', 'cruft', 'emptyScratch'],
   sweepOnLaunch: false,
+  // Deleting a memory orphans its MEMORY.md line. On by default because the
+  // delete dialog lists every line it will drop before anything happens, and
+  // the alternative is leaving behind an index this app then reports as broken.
+  repairIndexOnDelete: true,
 };
 
 let file = null;

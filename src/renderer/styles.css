@@ -378,8 +378,25 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent);
 .issue.sev-warn { border-left: 3px solid var(--warn); }
 .issue.sev-info { border-left: 3px solid var(--info); }
 .issue .body { flex: 1; min-width: 0; }
-.issue .t { font-weight: 580; font-size: 12.5px; margin-bottom: 2px; }
+.issue .t { font-weight: 580; font-size: 12.5px; margin-bottom: 2px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .issue .d { font-size: 12px; color: var(--text-dim); }
+
+/* ---------- repair diff ---------- */
+
+/* One proposed edit to MEMORY.md, shown the way a patch reads: the line as it
+   is now, then the line as it would be. Removals show only the first. */
+.diff {
+  margin-top: 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font: 11.5px/1.6 var(--mono);
+}
+
+.diff > div { padding: 1px 9px; white-space: pre; }
+.diff .del { background: var(--danger-soft); color: var(--danger); }
+.diff .add { background: var(--live-soft); color: var(--live); }
+.diff .ctx { color: var(--text-dim); }
 
 .empty {
   text-align: center;

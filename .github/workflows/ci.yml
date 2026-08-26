@@ -34,5 +34,9 @@ jobs:
       - name: Trash, restore, purge and path-guard suite
         run: node scripts/t-trash.mjs
 
+      # Also sandboxed: it builds its own memory directory and repairs it there.
+      - name: Memory diagnosis and MEMORY.md repair suite
+        run: node scripts/t-memfix.mjs
+
       - name: Icon generation
         run: npm run icon

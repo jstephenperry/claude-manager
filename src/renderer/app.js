@@ -75,7 +75,7 @@ function renderTabs() {
       'aria-selected': String(store.tab === tab.id),
       onclick: () => {
         clearSelection();
-        set({ tab: tab.id, openMemory: null, openScratch: null });
+        set({ tab: tab.id, openMemory: null, openScratch: null, memoryRepair: null });
       },
     },
       tab.label,

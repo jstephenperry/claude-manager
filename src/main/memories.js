@@ -7,6 +7,10 @@
 // outlive the files they point at, `[[wikilinks]]` name memories that were
 // never written, and `originSessionId` outlives the session it came from.
 // Detecting that drift is most of what makes cleanup here worth doing.
+//
+// The index is parsed with positions -- which line each link sits on and which
+// columns its target occupies -- because `repair.js` rewrites MEMORY.md in
+// place and must touch nothing but the link it is fixing.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -66,15 +70,138 @@ export function extractLinks(body) {
   return [...out];
 }
 
-/** Extract `- [Title](file.md)` entries from MEMORY.md. */
+/**
+ * Split text into lines, remembering each line's own terminator so an edited
+ * file keeps the endings it arrived with. MEMORY.md is usually CRLF on Windows
+ * and LF everywhere else, and a repair that flips every line ending would show
+ * up as a whole-file change in git.
+ *
+ * `joinLines(splitLines(t)) === t` for any input.
+ */
+export function splitLines(text) {
+  const out = [];
+  let i = 0;
+  for (;;) {
+    const nl = text.indexOf('\n', i);
+    if (nl === -1) {
+      out.push({ text: text.slice(i), eol: '' });
+      return out;
+    }
+    const raw = text.slice(i, nl);
+    const crlf = raw.endsWith('\r');
+    out.push({ text: crlf ? raw.slice(0, -1) : raw, eol: crlf ? '\r\n' : '\n' });
+    i = nl + 1;
+  }
+}
+
+export function joinLines(lines) {
+  return lines.map((l) => l.text + l.eol).join('');
+}
+
+const LINK_RE = /\[([^\]]*)\]\(([^)]*)\)/g;
+// A scheme of two or more characters: `https:`, `mailto:`, `file:`. One letter
+// is a Windows drive, and `C:/notes.md` is a path this app can still reason about.
+const EXTERNAL_RE = /^[a-z][a-z0-9+.-]+:/i;
+
+/**
+ * Pull the link destination out of the parentheses of a markdown link,
+ * separating it from an optional title (`[t](file.md "why")`) and from the
+ * angle brackets a target with spaces needs. `raw` is the exact source text
+ * the destination occupies, so a rewrite can replace precisely that span.
+ */
+function parseTarget(inner) {
+  const trimmed = inner.trim();
+  if (trimmed.startsWith('<')) {
+    const close = trimmed.indexOf('>');
+    if (close !== -1) return { raw: trimmed.slice(0, close + 1), value: trimmed.slice(1, close).trim() };
+  }
+  const titled = trimmed.match(/^(\S+)\s+["'(]/);
+  if (titled) return { raw: titled[1], value: titled[1] };
+  return { raw: trimmed, value: trimmed };
+}
+
+/**
+ * Reduce an index target to the path it actually means: no angle brackets, no
+ * `#anchor`, percent-escapes decoded, backslashes folded to `/`, and no
+ * pointless `./` prefix. `[Notes](./notes.md)` and `[Notes](notes%20.md)` both
+ * name a file that is right there, and neither is broken.
+ */
+export function normalizeIndexTarget(raw) {
+  let t = String(raw || '').trim();
+  if (t.startsWith('<') && t.endsWith('>')) t = t.slice(1, -1).trim();
+  t = t.split('#')[0].trim();
+  try {
+    t = decodeURIComponent(t);
+  } catch {
+    /* a literal % that is not an escape stays as written */
+  }
+  t = t.replace(/\\/g, '/');
+  while (t.startsWith('./')) t = t.slice(2);
+  return t;
+}
+
+/**
+ * Extract `- [Title](file.md)` entries from MEMORY.md, with the position of
+ * every one. Links inside fenced code blocks are examples, not index lines,
+ * and external URLs are not memories -- both are skipped.
+ */
 export function parseIndex(text) {
   const entries = [];
-  for (const m of text.matchAll(/\[([^\]]*)\]\(([^)]+)\)/g)) {
-    const target = m[2].trim();
-    if (/^[a-z]+:\/\//i.test(target)) continue; // external URL, not a memory
-    entries.push({ title: m[1].trim(), file: target.split('#')[0] });
+  let inFence = false;
+
+  for (const [line, l] of splitLines(text).entries()) {
+    if (/^\s*(?:```|~~~)/.test(l.text)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+
+    const found = [];
+    for (const m of l.text.matchAll(LINK_RE)) {
+      const { raw, value } = parseTarget(m[2]);
+      if (!value || EXTERNAL_RE.test(value)) continue;
+      const hash = value.indexOf('#');
+      const file = hash === -1 ? value : value.slice(0, hash);
+      if (!file) continue; // a bare `#anchor` points inside this same file
+
+      const start = m.index + m[0].indexOf('](') + 2 + m[2].indexOf(raw);
+      found.push({
+        title: m[1].trim(),
+        file,
+        anchor: hash === -1 ? '' : value.slice(hash + 1),
+        line,
+        start,
+        end: start + raw.length,
+        raw: l.text,
+      });
+    }
+    // How many memory links share the line decides whether the line can be
+    // deleted wholesale when one of them is beyond repair.
+    for (const e of found) {
+      e.linkCount = found.length;
+      entries.push(e);
+    }
   }
   return entries;
+}
+
+/**
+ * Work out what each index entry points at on disk. An entry is only broken
+ * when it names neither a file in this directory nor anything that exists at
+ * the path it spells out -- `../CLAUDE.md` and `notes/api.md` are unusual, but
+ * they resolve, and a repair pass must not "fix" a link that already works.
+ */
+async function resolveIndexEntries(index, memoryDir, files) {
+  const byName = new Map(files.map((f) => [f.name.toLowerCase(), f.name]));
+  for (const e of index.entries) {
+    const n = normalizeIndexTarget(e.file);
+    e.normalized = n;
+    e.baseName = n.split('/').pop();
+    e.bare = Boolean(n) && !n.includes('/');
+    e.match = (e.bare && byName.get(e.baseName.toLowerCase())) || '';
+    e.resolvedPath = path.resolve(memoryDir, n || '.');
+    e.resolvedExists = n ? Boolean(await statOrNull(e.resolvedPath)) : false;
+  }
 }
 
 /**
@@ -139,6 +266,7 @@ export async function readMemoryDir(memoryDir, knownSessionIds = new Set()) {
   }
 
   files.sort((a, b) => b.mtime - a.mtime);
+  if (indexEntry) await resolveIndexEntries(indexEntry, memoryDir, files);
 
   const issues = diagnose(files, indexEntry, knownSessionIds, memoryDir);
   const { bytes } = await measure(memoryDir);
@@ -151,7 +279,11 @@ function diagnose(files, index, knownSessionIds, memoryDir) {
   const byFileName = new Map(files.map((f) => [f.name.toLowerCase(), f]));
   const slugs = new Map();
 
-  const indexedFiles = new Set((index?.entries || []).map((e) => e.file.toLowerCase()));
+  // Only entries that actually land on a file in this directory count as
+  // indexing it; a link out to another folder does not make a memory loadable.
+  const indexedFiles = new Set(
+    (index?.entries || []).filter((e) => e.match).map((e) => e.match.toLowerCase())
+  );
 
   if (!index && files.length) {
     issues.push({
@@ -255,16 +387,17 @@ function diagnose(files, index, knownSessionIds, memoryDir) {
   }
 
   for (const e of index?.entries || []) {
-    if (!byFileName.has(e.file.toLowerCase())) {
-      issues.push({
-        kind: 'dangling-index',
-        severity: 'error',
-        title: 'Index points at a missing file',
-        detail: `MEMORY.md lists "${e.title}" -> ${e.file}, but that file is not in ${path.basename(memoryDir)}/.`,
-        paths: [],
-        indexFile: e.file,
-      });
-    }
+    if (e.match || e.resolvedExists) continue;
+    issues.push({
+      kind: 'dangling-index',
+      severity: 'error',
+      title: 'Index points at a missing file',
+      detail: `MEMORY.md lists "${e.title}" -> ${e.file} on line ${e.line + 1}, but that file is not in ${path.basename(memoryDir)}/.`,
+      paths: index ? [index.path] : [],
+      indexFile: e.file,
+      indexTitle: e.title,
+      line: e.line + 1,
+    });
   }
 
   return issues;

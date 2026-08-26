@@ -335,6 +335,7 @@ export async function scanProjects() {
         issues: memory.issues,
         files: memory.files.map((f) => ({ ...f, text: undefined, body: undefined })),
         hasIndex: Boolean(memory.index),
+        indexPath: memory.index?.path || '',
       },
     });
   }
