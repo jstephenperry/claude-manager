@@ -5,56 +5,21 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { ipcMain, shell, dialog, clipboard } from 'electron';
-import { CLAUDE_ROOT, PROJECTS_DIR, TRASH_DIR, SCRATCH_ROOT, isInsideClaudeRoot, isManagedPath } from './paths.js';
-import { scanProjects, readLiveSessions } from './scanner.js';
-import { scanCruft } from './cruft.js';
+import { CLAUDE_ROOT, PROJECTS_DIR, TRASH_DIR, isInsideClaudeRoot, isManagedPath } from './paths.js';
+import { readLiveSessions } from './scanner.js';
 import { readTranscript } from './transcript.js';
 import { readMemoryDir, writeMemory } from './memories.js';
 import { planIndexRepairs, applyIndexRepairs } from './repair.js';
-import { trashItem, listTrash, restoreEntry, purgeEntry, purgeAll, trashSize } from './trash.js';
-import { scanScratchpads, listDir, readScratchFile } from './scratchpads.js';
+import { trashItem, listTrash, restoreEntry, purgeEntry, purgeAll } from './trash.js';
+import { listDir, readScratchFile } from './scratchpads.js';
 import { planSweep, SWEEP_CATEGORIES } from './sweep.js';
 import { getSettings, updateSettings } from './settings.js';
 import { measure, statOrNull, readDirSafe } from './util.js';
-
-/** Cached between calls so delete handlers can re-check liveness cheaply. */
-let lastScan = null;
-
-async function fullScan() {
-  const scan = await scanProjects();
-  const knownIds = new Set(scan.sessionIds);
-  const liveIds = new Set(scan.live.filter((l) => l.alive).map((l) => l.sessionId));
-  const cruft = await scanCruft(knownIds, liveIds);
-  const scratchpads = await scanScratchpads(knownIds, liveIds);
-  const trash = await trashSize();
-
-  const totals = {
-    projects: scan.projects.length,
-    sessions: scan.sessionIds.length,
-    liveSessions: liveIds.size,
-    memories: scan.projects.reduce((n, p) => n + p.memory.count, 0),
-    memoryIssues: scan.projects.reduce((n, p) => n + p.memory.issues.length, 0),
-    projectBytes: scan.projects.reduce((n, p) => n + p.totalBytes, 0),
-    cruftBytes: cruft.totalBytes,
-    reclaimableBytes: cruft.reclaimableBytes,
-    trashBytes: trash.bytes,
-    trashCount: trash.count,
-    scratchBytes: scratchpads.totalBytes,
-    scratchSessions: scratchpads.sessionCount || 0,
-    scratchEmpty: scratchpads.emptyCount || 0,
-    scratchOrphanBytes: scratchpads.orphanBytes || 0,
-  };
-
-  lastScan = {
-    ...scan, cruft, scratchpads, totals,
-    root: CLAUDE_ROOT, trashDir: TRASH_DIR, scratchRoot: SCRATCH_ROOT,
-  };
-  return lastScan;
-}
+import { fullScan, refresh, scopeForPaths, getIndex, ensureIndex } from './indexer.js';
 
 /** A session may never be deleted while a process is attached to it. */
 function assertNotLive(sessionId) {
-  const project = lastScan?.projects.find((p) => p.sessions.some((s) => s.id === sessionId));
+  const project = getIndex()?.projects.find((p) => p.sessions.some((s) => s.id === sessionId));
   const session = project?.sessions.find((s) => s.id === sessionId);
   if (session?.live) {
     throw new Error(
@@ -65,7 +30,12 @@ function assertNotLive(sessionId) {
 }
 
 export function registerIpc() {
-  ipcMain.handle('scan', () => fullScan());
+  /**
+   * `force` re-reads everything; without it the caller gets the index as it
+   * stands. Every mutation below leaves the index correct, so the refresh a
+   * delete triggers costs nothing rather than repeating the work.
+   */
+  ipcMain.handle('scan', (_e, { force } = {}) => (force ? fullScan() : ensureIndex()));
 
   ipcMain.handle('live', async () => [...(await readLiveSessions()).values()]);
 
@@ -105,7 +75,7 @@ export function registerIpc() {
 
   ipcMain.handle('memory:read', async (_e, { dir }) => {
     if (!isInsideClaudeRoot(dir)) throw new Error('Refusing to read outside the Claude data directory.');
-    const known = new Set(lastScan?.sessionIds || []);
+    const known = new Set(getIndex()?.sessionIds || []);
     const r = await readMemoryDir(dir, known);
     return { ...r, files: r.files.map((f) => ({ ...f, text: undefined })) };
   });
@@ -145,15 +115,16 @@ export function registerIpc() {
   ipcMain.handle('memory:repairApply', async (_e, { dir, ids } = {}) => {
     if (!isInsideClaudeRoot(dir)) throw new Error('Refusing to write outside the Claude data directory.');
     const result = await applyIndexRepairs(dir, { ids, trashed: await trashedPaths() });
-    if (result.changed) await fullScan();
+    if (result.changed) await refresh(scopeForPaths([dir]));
     return result;
   });
 
   // ---- deletion -----------------------------------------------------------
 
   ipcMain.handle('delete:sessions', async (_e, { ids }) => {
-    if (!lastScan) await fullScan();
+    await ensureIndex();
     const results = [];
+    const touched = [];
     for (const id of ids) {
       try {
         const { project, session } = assertNotLive(id);
@@ -175,11 +146,12 @@ export function registerIpc() {
           },
         });
         results.push({ id, ok: true, entry });
+        touched.push(...paths);
       } catch (err) {
         results.push({ id, ok: false, error: err.message });
       }
     }
-    await fullScan();
+    await refresh({ ...scopeForPaths(touched), sessions: true });
     return results;
   });
 
@@ -198,7 +170,7 @@ export function registerIpc() {
         results.push({ id: file, ok: false, error: err.message });
       }
     }
-    await fullScan();
+    await refresh(scopeForPaths(files));
     return results;
   });
 
@@ -217,13 +189,13 @@ export function registerIpc() {
         results.push({ id: item.id, ok: false, error: err.message });
       }
     }
-    await fullScan();
+    await refresh(scopeForPaths(items.flatMap((i) => i.paths || [])));
     return results;
   });
 
   ipcMain.handle('delete:project', async (_e, { projectId }) => {
-    if (!lastScan) await fullScan();
-    const project = lastScan.projects.find((p) => p.id === projectId);
+    await ensureIndex();
+    const project = getIndex().projects.find((p) => p.id === projectId);
     if (!project) throw new Error('Project not found; rescan and try again.');
     const liveOnes = project.sessions.filter((s) => s.live);
     if (liveOnes.length) {
@@ -238,7 +210,7 @@ export function registerIpc() {
       paths: [project.dir, ...satellites],
       context: { projectId, sessions: project.sessionCount, memories: project.memory.count },
     });
-    await fullScan();
+    await refresh({ ...scopeForPaths(satellites), dropped: [projectId], sessions: true });
     return entry;
   });
 
@@ -259,9 +231,9 @@ export function registerIpc() {
   ipcMain.handle('sweep:categories', () => SWEEP_CATEGORIES);
 
   ipcMain.handle('sweep:plan', async (_e, { days, categories } = {}) => {
-    if (!lastScan) await fullScan();
+    await ensureIndex();
     const trash = await listTrash();
-    return planSweep(lastScan, trash, {
+    return planSweep(getIndex(), trash, {
       days,
       categories: Array.isArray(categories) ? new Set(categories) : undefined,
     });
@@ -273,9 +245,9 @@ export function registerIpc() {
    * since it was built must not be swept.
    */
   ipcMain.handle('sweep:run', async (_e, { ids, days, categories } = {}) => {
-    if (!lastScan) await fullScan();
+    await ensureIndex();
     const trash = await listTrash();
-    const plan = planSweep(lastScan, trash, {
+    const plan = planSweep(getIndex(), trash, {
       days,
       categories: Array.isArray(categories) ? new Set(categories) : undefined,
     });
@@ -284,6 +256,7 @@ export function registerIpc() {
     const chosen = wanted ? plan.items.filter((i) => wanted.has(i.id)) : plan.items;
 
     const results = [];
+    const touched = [];
     for (const item of chosen) {
       try {
         if (item.sessionId) assertNotLive(item.sessionId);
@@ -301,11 +274,13 @@ export function registerIpc() {
           context: { sweptAt: new Date().toISOString(), ageDays: item.ageDays, category: item.category },
         });
         results.push({ id: item.id, ok: Boolean(entry), bytes: item.bytes, entry });
+        touched.push(...(item.paths || []));
       } catch (err) {
         results.push({ id: item.id, ok: false, error: err.message });
       }
     }
-    await fullScan();
+    // A sweep can empty half the tree, but it still only touches what it lists.
+    await refresh({ ...scopeForPaths(touched), sessions: chosen.some((i) => i.sessionId) });
     return {
       results,
       moved: results.filter((r) => r.ok).length,
@@ -324,17 +299,17 @@ export function registerIpc() {
   ipcMain.handle('trash:list', () => listTrash());
   ipcMain.handle('trash:restore', async (_e, { id }) => {
     const r = await restoreEntry(id);
-    await fullScan();
+    await refresh({ ...scopeForPaths(r.restored), sessions: true });
     return r;
   });
   ipcMain.handle('trash:purge', async (_e, { id }) => {
     const r = await purgeEntry(id);
-    await fullScan();
+    await refresh({}); // nothing on disk moved outside the trash itself
     return r;
   });
   ipcMain.handle('trash:purgeAll', async () => {
     const r = await purgeAll();
-    await fullScan();
+    await refresh({});
     return r;
   });
 

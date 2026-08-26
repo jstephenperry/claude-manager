@@ -38,5 +38,10 @@ jobs:
       - name: Memory diagnosis and MEMORY.md repair suite
         run: node scripts/t-memfix.mjs
 
+      # The timing half finds no data on a runner and says so; the correctness
+      # half builds its own sandbox and checks scoped refresh against full scan.
+      - name: Scan timing and scoped-refresh correctness
+        run: node scripts/t-bench.mjs
+
       - name: Icon generation
         run: npm run icon

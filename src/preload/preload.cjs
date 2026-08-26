@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const call = (channel, payload) => ipcRenderer.invoke(channel, payload);
 
 contextBridge.exposeInMainWorld('api', {
-  scan: () => call('scan'),
+  scan: (force) => call('scan', { force: Boolean(force) }),
   live: () => call('live'),
   roots: () => call('roots'),
 
