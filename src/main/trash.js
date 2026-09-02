@@ -10,20 +10,68 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { TRASH_DIR, isInsideClaudeRoot, isManagedPath } from './paths.js';
+import { TRASH_DIR, isInsideTrashDir, isManagedPath } from './paths.js';
 import { readJsonSafe, writeJsonAtomic, statOrNull, movePath, measure, readDirSafe } from './util.js';
 
 const MANIFEST = path.join(TRASH_DIR, 'manifest.json');
 
+/**
+ * The manifest is data on disk, not a trusted record. It sits inside ~/.claude,
+ * which a Claude Code session writes to freely -- so a prompt-injected session,
+ * or any process running as the user, can put whatever it likes in it. Every
+ * field that becomes a filesystem path is checked before it is believed:
+ *
+ * - `id` must be exactly what `trashItem` generates (base-36 time, dash, eight
+ *   hex digits). `../projects` is not an id, and `path.join(TRASH_DIR, id)` would
+ *   otherwise resolve straight out of the trash into a recursive delete.
+ * - every `to` must sit inside this entry's own directory under the trash;
+ * - every `from` must sit inside a managed root, or restore becomes "move any
+ *   file to any path".
+ *
+ * Entries that fail are kept in the file so nothing is silently discarded, but
+ * they are never listed, restored, or purged.
+ */
+const ID_RE = /^[a-z0-9]+-[0-9a-f]{8}$/;
+
+function entryIsSound(e) {
+  if (!e || typeof e.id !== 'string' || !ID_RE.test(e.id)) return false;
+  if (!Array.isArray(e.paths)) return false;
+  const dir = path.join(TRASH_DIR, e.id);
+  return e.paths.every(
+    (p) =>
+      p &&
+      typeof p.from === 'string' &&
+      typeof p.to === 'string' &&
+      isManagedPath(p.from) &&
+      isInsideTrashDir(p.to) &&
+      path.relative(dir, path.resolve(p.to)) !== '' &&
+      !path.relative(dir, path.resolve(p.to)).startsWith('..')
+  );
+}
+
 async function readManifest() {
   const m = await readJsonSafe(MANIFEST, null);
-  if (m && Array.isArray(m.entries)) return m;
-  return { version: 1, entries: [] };
+  if (!m || !Array.isArray(m.entries)) return { version: 1, entries: [], rejected: [] };
+  const entries = [];
+  const rejected = [];
+  for (const e of m.entries) (entryIsSound(e) ? entries : rejected).push(e);
+  if (rejected.length) {
+    console.warn(`[trash] ignoring ${rejected.length} manifest entr${rejected.length === 1 ? 'y' : 'ies'} with paths outside the trash`);
+  }
+  return { version: 1, entries, rejected };
 }
 
 async function writeManifest(m) {
   await fs.mkdir(TRASH_DIR, { recursive: true });
-  await writeJsonAtomic(MANIFEST, m);
+  // Unsound entries ride along untouched: inert, but not erased behind the
+  // user's back.
+  await writeJsonAtomic(MANIFEST, { version: 1, entries: [...m.entries, ...(m.rejected || [])] });
+}
+
+/** Refuse to remove anything that is not inside the trash directory itself. */
+async function removeInsideTrash(dir) {
+  if (!isInsideTrashDir(dir)) throw new Error(`Refusing to purge outside the trash directory: ${dir}`);
+  await fs.rm(dir, { recursive: true, force: true });
 }
 
 /**
@@ -62,7 +110,7 @@ export async function trashItem(item) {
   }
 
   if (!moved.length) {
-    await fs.rm(entryDir, { recursive: true, force: true });
+    await removeInsideTrash(entryDir);
     return null;
   }
 
@@ -120,7 +168,7 @@ export async function restoreEntry(id) {
 
   if (!skipped.length) {
     manifest.entries.splice(idx, 1);
-    await fs.rm(path.join(TRASH_DIR, entry.id), { recursive: true, force: true });
+    await removeInsideTrash(path.join(TRASH_DIR, entry.id));
   } else {
     // Keep the entry alive so the un-restored remainder is still recoverable.
     entry.paths = entry.paths.filter((p) => skipped.includes(p.from));
@@ -134,9 +182,7 @@ export async function purgeEntry(id) {
   const idx = manifest.entries.findIndex((e) => e.id === id);
   if (idx === -1) return { purged: 0 };
   const entry = manifest.entries[idx];
-  const dir = path.join(TRASH_DIR, entry.id);
-  if (!isInsideClaudeRoot(dir)) throw new Error('Refusing to purge outside the Claude data directory.');
-  await fs.rm(dir, { recursive: true, force: true });
+  await removeInsideTrash(path.join(TRASH_DIR, entry.id));
   manifest.entries.splice(idx, 1);
   await writeManifest(manifest);
   return { purged: 1, bytes: entry.bytes };
@@ -146,19 +192,19 @@ export async function purgeAll() {
   const manifest = await readManifest();
   let bytes = 0;
   for (const e of manifest.entries) {
-    const dir = path.join(TRASH_DIR, e.id);
-    if (!isInsideClaudeRoot(dir)) continue;
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeInsideTrash(path.join(TRASH_DIR, e.id));
     bytes += e.bytes;
   }
   const count = manifest.entries.length;
   manifest.entries = [];
+  manifest.rejected = []; // emptying the trash is the one time unsound records go too
   await writeManifest(manifest);
 
-  // Sweep any orphaned entry directories a crash may have left behind.
+  // Sweep any orphaned entry directories a crash may have left behind. Names
+  // come from readdir, so they are single segments and cannot climb out.
   for (const name of await readDirSafe(TRASH_DIR)) {
     if (name === 'manifest.json') continue;
-    await fs.rm(path.join(TRASH_DIR, name), { recursive: true, force: true });
+    await removeInsideTrash(path.join(TRASH_DIR, name));
   }
   return { purged: count, bytes };
 }
