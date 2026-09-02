@@ -86,6 +86,11 @@ export function isInsideScratchRoot(target) {
   return isInside(SCRATCH_ROOT, target);
 }
 
+/** Purges may remove only what sits inside the trash directory itself. */
+export function isInsideTrashDir(target) {
+  return isInside(TRASH_DIR, target);
+}
+
 /** True when the path sits inside a tree this app is allowed to touch. */
 export function isManagedPath(target) {
   return MANAGED_ROOTS.some((root) => isInside(root, target));
