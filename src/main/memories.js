@@ -98,26 +98,89 @@ export function joinLines(lines) {
   return lines.map((l) => l.text + l.eol).join('');
 }
 
-const LINK_RE = /\[([^\]]*)\]\(([^)]*)\)/g;
+/**
+ * Walk a line yielding `[text](destination)` links with the exact span the
+ * destination occupies.
+ *
+ * A regex cannot do this. `[^)]*` stops at the first `)`, so `notes(1).md`
+ * parses as `notes(1` and `<my (file).md>` as `<my` -- both real filenames, and
+ * the second is one this module writes itself: `formatTarget` wraps a
+ * destination containing parentheses in angle brackets, so a regex-parsed
+ * repair produced a link it would report as broken on the very next pass. The
+ * destination is therefore scanned the way CommonMark defines it: the
+ * angle-bracket form runs to its closing `>`, the bare form counts parentheses.
+ */
+function* scanLinks(line) {
+  for (let i = 0; i < line.length; i += 1) {
+    if (line[i] !== '[') continue;
+    const textEnd = line.indexOf(']', i + 1);
+    if (textEnd === -1) break;
+    if (line[textEnd + 1] !== '(') {
+      i = textEnd;
+      continue;
+    }
+
+    let j = textEnd + 2;
+    while (j < line.length && /\s/.test(line[j])) j += 1;
+    const start = j;
+
+    if (line[j] === '<') {
+      const gt = line.indexOf('>', j + 1);
+      if (gt === -1) {
+        i = textEnd;
+        continue;
+      }
+      j = gt + 1;
+    } else {
+      let depth = 0;
+      while (j < line.length) {
+        const c = line[j];
+        if (c === '\\') {
+          j += 2;
+          continue;
+        }
+        if (/\s/.test(c)) break;
+        if (c === '(') depth += 1;
+        else if (c === ')') {
+          if (depth === 0) break;
+          depth -= 1;
+        }
+        j += 1;
+      }
+    }
+    const raw = line.slice(start, j);
+
+    // An optional title sits between the destination and the closing paren.
+    let k = j;
+    while (k < line.length && /\s/.test(line[k])) k += 1;
+    if (k < line.length && line[k] !== ')') {
+      const open = line[k];
+      if (open === '"' || open === "'" || open === '(') {
+        const titleEnd = line.indexOf(open === '(' ? ')' : open, k + 1);
+        if (titleEnd === -1) {
+          i = textEnd;
+          continue;
+        }
+        k = titleEnd + 1;
+        while (k < line.length && /\s/.test(line[k])) k += 1;
+      }
+    }
+    if (line[k] !== ')') {
+      i = textEnd;
+      continue;
+    }
+
+    yield { title: line.slice(i + 1, textEnd), raw, start, end: start + raw.length };
+    i = k;
+  }
+}
 // A scheme of two or more characters: `https:`, `mailto:`, `file:`. One letter
 // is a Windows drive, and `C:/notes.md` is a path this app can still reason about.
 const EXTERNAL_RE = /^[a-z][a-z0-9+.-]+:/i;
 
-/**
- * Pull the link destination out of the parentheses of a markdown link,
- * separating it from an optional title (`[t](file.md "why")`) and from the
- * angle brackets a target with spaces needs. `raw` is the exact source text
- * the destination occupies, so a rewrite can replace precisely that span.
- */
-function parseTarget(inner) {
-  const trimmed = inner.trim();
-  if (trimmed.startsWith('<')) {
-    const close = trimmed.indexOf('>');
-    if (close !== -1) return { raw: trimmed.slice(0, close + 1), value: trimmed.slice(1, close).trim() };
-  }
-  const titled = trimmed.match(/^(\S+)\s+["'(]/);
-  if (titled) return { raw: titled[1], value: titled[1] };
-  return { raw: trimmed, value: trimmed };
+/** The destination a scanned link points at, with its angle brackets removed. */
+function targetValue(raw) {
+  return raw.startsWith('<') && raw.endsWith('>') ? raw.slice(1, -1).trim() : raw;
 }
 
 /**
@@ -157,21 +220,20 @@ export function parseIndex(text) {
     if (inFence) continue;
 
     const found = [];
-    for (const m of l.text.matchAll(LINK_RE)) {
-      const { raw, value } = parseTarget(m[2]);
+    for (const link of scanLinks(l.text)) {
+      const value = targetValue(link.raw);
       if (!value || EXTERNAL_RE.test(value)) continue;
       const hash = value.indexOf('#');
       const file = hash === -1 ? value : value.slice(0, hash);
       if (!file) continue; // a bare `#anchor` points inside this same file
 
-      const start = m.index + m[0].indexOf('](') + 2 + m[2].indexOf(raw);
       found.push({
-        title: m[1].trim(),
+        title: link.title.trim(),
         file,
         anchor: hash === -1 ? '' : value.slice(hash + 1),
         line,
-        start,
-        end: start + raw.length,
+        start: link.start,
+        end: link.end,
         raw: l.text,
       });
     }

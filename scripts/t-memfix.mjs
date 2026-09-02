@@ -144,6 +144,28 @@ ok('two links on one line are left to a human', plan.manual.filter((m) => ['gone
 ok('counts add up', plan.counts.total === plan.actions.length && plan.counts.auto === 6 && plan.counts.manual === 3);
 ok('guesses stay unticked', plan.actions.filter((a) => a.via === 'similar' || a.via === 'duplicate').every((a) => !a.auto));
 
+// A destination is not "everything up to the first )". Filenames with
+// parentheses are real, and `formatTarget` writes the angle-bracket form
+// itself -- so a repair must be able to read back what it just wrote.
+const parenDir = path.join(sandbox, 'projects', 'X--test', 'parens');
+await fs.mkdir(parenDir, { recursive: true });
+await fs.writeFile(path.join(parenDir, 'notes(1).md'), '---\nname: notes-1\n---\n\nBody.\n', 'utf8');
+await fs.writeFile(path.join(parenDir, 'my (file).md'), '---\nname: my-file\n---\n\nBody.\n', 'utf8');
+await fs.writeFile(path.join(parenDir, 'MEMORY.md'), [
+  '- [Bare](notes(1).md)',
+  '- [Wrapped](<my (file).md>)',
+  '- [Titled](notes(1).md "why")',
+  '',
+].join('\n'), 'utf8');
+const parens = await readMemoryDir(parenDir);
+ok('a parenthesised filename parses whole', parens.index.entries[0].file === 'notes(1).md');
+ok('  so does the angle-bracket form this app writes', parens.index.entries[1].file === 'my (file).md');
+ok('  and one carrying a title', parens.index.entries[2].file === 'notes(1).md');
+ok('  none of them are reported broken', parens.issues.filter((i) => i.kind === 'dangling-index').length === 0);
+ok('  and none are reported unindexed', parens.issues.filter((i) => i.kind === 'unindexed').length === 0);
+const parenPlan = planIndexRepairs(parens, {});
+ok('  so the repair pass has nothing to do', parenPlan.actions.length === 0 && parenPlan.manual.length === 0);
+
 // Two edits inside a six-character name is a different memory, not a typo:
 // `gone-0` must not be "repaired" into `note-0`.
 const shortDir = path.join(sandbox, 'projects', 'X--test', 'short');
