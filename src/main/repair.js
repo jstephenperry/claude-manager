@@ -25,6 +25,7 @@
 import path from 'node:path';
 import { readMemoryDir, splitLines, joinLines } from './memories.js';
 import { writeTextAtomic } from './util.js';
+import { PROJECTS_DIR, assertResolvesInside } from './paths.js';
 
 const stem = (name) => name.replace(/\.md$/i, '');
 const withExt = (name) => (/\.md$/i.test(name) ? name : name + '.md');
@@ -380,6 +381,9 @@ export async function applyIndexRepairs(memoryDir, opts = {}) {
     repointed: applied.filter((a) => a.kind === 'repoint').length,
   };
 
-  if (result.changed) await writeTextAtomic(memory.index.path, after);
+  if (result.changed) {
+    await assertResolvesInside(memory.index.path, PROJECTS_DIR, { finalLink: 'refuse' });
+    await writeTextAtomic(memory.index.path, after);
+  }
   return result;
 }

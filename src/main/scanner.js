@@ -80,6 +80,19 @@ export async function readLiveSessions() {
   return out;
 }
 
+/**
+ * Session ids a running process is attached to right now, read from the
+ * registry rather than from the index: the index is as old as the last scan,
+ * and a session resumed since then is exactly the one a delete must not take.
+ */
+export async function aliveSessionIds() {
+  const out = new Set();
+  for (const l of (await readLiveSessions()).values()) {
+    if (l.alive) out.add(String(l.sessionId).toLowerCase());
+  }
+  return out;
+}
+
 /** Stream one transcript and reduce it to the metadata the UI shows. */
 async function scanTranscript(file) {
   const meta = {

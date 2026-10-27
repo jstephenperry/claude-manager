@@ -5,8 +5,8 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { ipcMain, shell, dialog, clipboard } from 'electron';
-import { CLAUDE_ROOT, PROJECTS_DIR, TRASH_DIR, isInsideClaudeRoot, isManagedPath } from './paths.js';
-import { readLiveSessions } from './scanner.js';
+import { CLAUDE_ROOT, PROJECTS_DIR, TRASH_DIR, isInsideClaudeRoot, isManagedPath, sessionIdsIn } from './paths.js';
+import { readLiveSessions, aliveSessionIds } from './scanner.js';
 import { readTranscript } from './transcript.js';
 import { readMemoryDir, writeMemory } from './memories.js';
 import { planIndexRepairs, applyIndexRepairs } from './repair.js';
@@ -17,16 +17,28 @@ import { getSettings, updateSettings } from './settings.js';
 import { measure, statOrNull, readDirSafe } from './util.js';
 import { fullScan, refresh, scopeForPaths, getIndex, ensureIndex } from './indexer.js';
 
-/** A session may never be deleted while a process is attached to it. */
-function assertNotLive(sessionId) {
+/** Where a session id lives in the index, if it is there. */
+function findSession(sessionId) {
   const project = getIndex()?.projects.find((p) => p.sessions.some((s) => s.id === sessionId));
   const session = project?.sessions.find((s) => s.id === sessionId);
-  if (session?.live) {
+  return { project, session };
+}
+
+/**
+ * Nothing belonging to a running session may move. Liveness comes from the
+ * registry as it is now, not from the index, which is only as fresh as the
+ * last scan, and a `claude --resume` after the window opened would otherwise
+ * go unnoticed. Every session id named in the paths counts: a transcript, its
+ * sidecar, its file-history and session-env entries, its scratchpad.
+ */
+function assertNoneLive(alive, { sessionIds = [], paths = [] } = {}) {
+  const ids = new Set([...sessionIds.filter(Boolean).map((s) => String(s).toLowerCase()), ...sessionIdsIn(paths)]);
+  for (const id of ids) {
+    if (!alive.has(id)) continue;
     throw new Error(
-      `Session ${sessionId.slice(0, 8)}… is attached to a running Claude Code process (pid ${session.liveInfo?.pid}). Close that session first.`
+      `Session ${id.slice(0, 8)}… is attached to a running Claude Code process. Close that session first.`
     );
   }
-  return { project, session };
 }
 
 export function registerIpc() {
@@ -123,16 +135,18 @@ export function registerIpc() {
 
   ipcMain.handle('delete:sessions', async (_e, { ids }) => {
     await ensureIndex();
+    const alive = await aliveSessionIds();
     const results = [];
     const touched = [];
     for (const id of ids) {
       try {
-        const { project, session } = assertNotLive(id);
+        const { project, session } = findSession(id);
         if (!session) {
           results.push({ id, ok: false, error: 'Session not found; rescan and try again.' });
           continue;
         }
         const paths = [session.jsonlPath, ...session.satellites.map((s) => s.path)];
+        assertNoneLive(alive, { sessionIds: [id], paths });
         const entry = await trashItem({
           kind: 'session',
           label: session.title || session.firstPrompt?.slice(0, 60) || id.slice(0, 8),
@@ -175,9 +189,11 @@ export function registerIpc() {
   });
 
   ipcMain.handle('delete:paths', async (_e, { items }) => {
+    const alive = await aliveSessionIds();
     const results = [];
     for (const item of items) {
       try {
+        assertNoneLive(alive, { paths: item.paths });
         const entry = await trashItem({
           kind: item.kind || 'cruft',
           label: item.label,
@@ -197,7 +213,12 @@ export function registerIpc() {
     await ensureIndex();
     const project = getIndex().projects.find((p) => p.id === projectId);
     if (!project) throw new Error('Project not found; rescan and try again.');
-    const liveOnes = project.sessions.filter((s) => s.live);
+    // The index's session list is as old as the last scan; a session started
+    // in this project since then has a transcript here and an entry in the
+    // registry, so both are read now.
+    const alive = await aliveSessionIds();
+    const onDisk = (await readDirSafe(project.dir)).filter((n) => n.endsWith('.jsonl')).map((n) => n.slice(0, -6).toLowerCase());
+    const liveOnes = [...new Set([...project.sessions.map((s) => s.id.toLowerCase()), ...onDisk])].filter((id) => alive.has(id));
     if (liveOnes.length) {
       throw new Error(
         `${liveOnes.length} session${liveOnes.length === 1 ? '' : 's'} in this project ${liveOnes.length === 1 ? 'is' : 'are'} still running. Close them first.`
@@ -255,11 +276,12 @@ export function registerIpc() {
     const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null;
     const chosen = wanted ? plan.items.filter((i) => wanted.has(i.id)) : plan.items;
 
+    const alive = await aliveSessionIds();
     const results = [];
     const touched = [];
     for (const item of chosen) {
       try {
-        if (item.sessionId) assertNotLive(item.sessionId);
+        assertNoneLive(alive, { sessionIds: [item.sessionId], paths: item.paths });
 
         if (item.category === 'trash' && item.trashId) {
           await purgeEntry(item.trashId);

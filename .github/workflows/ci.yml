@@ -34,6 +34,11 @@ jobs:
       - name: Trash, restore, purge and path-guard suite
         run: node scripts/t-trash.mjs
 
+      # Sandboxed: directory links planted inside a managed root, and a session
+      # that starts after the last scan, driven through the IPC handlers.
+      - name: Link containment and delete-time liveness suite
+        run: node scripts/t-guard.mjs
+
       # Also sandboxed: it builds its own memory directory and repairs it there.
       - name: Memory diagnosis and MEMORY.md repair suite
         run: node scripts/t-memfix.mjs
