@@ -65,11 +65,11 @@ The README states that live sessions are hard-blocked and that the sweep re-chec
 
 Fix: deletes, project deletes and sweeps read the live-session registry when they execute, and refuse any item whose paths name a live session id.
 
-### 7. Low, partly fixed: the bridge is reachable from any page the window navigates to
+### 7. Low, fixed: the bridge is reachable from any page the window navigates to
 
 The window sets no `will-navigate` or window-open handler (`src/main/main.js:15-34`), and the preload bridge belongs to the webContents rather than to `index.html`. By Electron's default, a file dropped onto the window navigates to it; an HTML file dropped there would run with `window.api`, including `trash:purgeAll` and `shell:openPath` with an arbitrary path. Verified in Electron 45.1.0 under Xvfb: with the guard removed, setting `location.href` to `file:///etc/hostname` navigated the window there, and that page had all 31 bridge functions. With the guard, the window stayed on `index.html`.
 
-Fixed: navigation and new windows are refused. Not changed: `sandbox: false` (`src/main/main.js:28`). The preload uses only `contextBridge` and `ipcRenderer`, which a sandboxed preload supports, so `sandbox: true` should work, but it was not tested in a running app. IPC handlers also do not check `event.senderFrame`, which matters only if the renderer runs code other than the app's own.
+Fixed: navigation and new windows are refused, and the renderer now runs with `sandbox: true` (`src/main/main.js:28`). The preload needed no change, since it uses only `contextBridge` and `ipcRenderer`, which a sandboxed preload keeps. Verified in Electron 45.1.0 under Xvfb as a non-root user with the setuid sandbox helper and no `--no-sandbox`: the renderer started with `--enable-sandbox`, seccomp filtering (`Seccomp: 2`) and its own pid namespace; every tab rendered, the bridge exposed its 31 functions and no `require`, `process` or `Buffer`, copy resolved, and `t-e2e.mjs` passed. The same build with `sandbox: false` started its renderer with `--no-sandbox`, no seccomp filter and the browser's pid namespace. Not changed: IPC handlers do not check `event.senderFrame`, which matters only if the renderer runs code other than the app's own.
 
 ### 8. Low, fixed: Electron 33 is out of support
 
