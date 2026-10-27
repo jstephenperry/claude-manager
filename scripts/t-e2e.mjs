@@ -41,8 +41,10 @@ await fs.writeFile(path.join(histDir, 'planted@v1'), 'z'.repeat(1234));
 console.log('planted synthetic orphan', FAKE_ID, '\n');
 
 // --- app detects it ---
+// The orphan was planted from outside the app, so only a forced scan reads it;
+// scan() without force returns the index as the app's own changes left it.
 const found = await evaluate(`
-  window.api.scan().then(s => {
+  window.api.scan(true).then(s => {
     const items = s.cruft.groups.flatMap(g => g.items).filter(i => i.name === '${FAKE_ID}');
     return JSON.stringify(items.map(i => ({ id: i.id, orphan: i.orphan, bytes: i.bytes, note: i.note })));
   })
@@ -94,7 +96,7 @@ await fs.rm(envDir, { recursive: true, force: true });
 await fs.rm(histDir, { recursive: true, force: true });
 ok('synthetic orphan removed', !(await exists(envDir)) && !(await exists(histDir)));
 
-await evaluate(`window.api.scan().then(()=>1)`);
+await evaluate(`window.api.scan(true).then(()=>1)`);
 console.log('\nreal ~/.claude left exactly as found');
 ws.close();
 process.exit(0);
