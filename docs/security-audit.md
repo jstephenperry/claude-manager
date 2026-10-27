@@ -75,9 +75,11 @@ Fixed: navigation and new windows are refused, and the renderer now runs with `s
 
 The lockfile resolves `electron` 33.4.11; the current release is 45.1.0. `npm audit` reports 46 advisories against 33.4.11, the most serious being a context-isolation bypass and use-after-free bugs. The app loads only its own local files and blocks navigation, so the advisories that need hostile web content are not reachable from what was found here. `electron-builder` 25.1.8 pulls in `tar` (critical) and `extract-zip` (high) versions with path-traversal advisories; these run only at build time on archives the build downloads itself. Fixed: `electron` is now 45.1.0 and `electron-builder` 26.18.0, and `npm audit` reports no vulnerabilities. The one API change the app hit is that `clipboard.writeText` returns a Promise since Electron 44, so the copy handler now awaits it.
 
-### 9. Low, not fixed: the release job trusts a tag-pinned third-party action with write access
+### 9. Low, partly fixed: the release job trusts a tag-pinned third-party action with write access
 
-`release.yml` grants `contents: write` and runs `softprops/action-gh-release@v2`, pinned by tag. Whoever controls that tag controls what is published. Pinning third-party actions to a commit SHA closes this. The release job also runs only `t-trash.mjs`, while CI runs every sandboxed suite.
+`release.yml` grants `contents: write` and ran `softprops/action-gh-release@v2`, pinned by tag. Whoever controls that tag controls what is published.
+
+Fixed: every action in `ci.yml` and `release.yml` is pinned to the full commit SHA its major tag pointed to, read from each action's own repository, with the version as a trailing comment, and `.github/dependabot.yml` keeps the pins current. Not changed: the release job runs only `t-trash.mjs`, while CI runs every sandboxed suite.
 
 ## What remains
 
