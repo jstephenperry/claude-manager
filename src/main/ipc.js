@@ -358,8 +358,10 @@ export function registerIpc() {
     return shell.openPath(st.isDirectory() ? p : path.dirname(p));
   });
 
-  ipcMain.handle('shell:copy', (_e, { text }) => {
-    clipboard.writeText(String(text ?? ''));
+  // Since Electron 44 the clipboard follows the W3C Clipboard API, and writes
+  // resolve when they land rather than returning synchronously.
+  ipcMain.handle('shell:copy', async (_e, { text }) => {
+    await clipboard.writeText(String(text ?? ''));
     return true;
   });
 
