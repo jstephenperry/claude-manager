@@ -61,16 +61,20 @@ export function decodeProjectDir(name) {
 /**
  * Session scratchpads and background-task output live outside ~/.claude, under
  * Claude Code's temp root: <root>/<project>/<session-id>/{scratchpad,tasks}.
- * On Linux and macOS that root is per user, claude-<uid>, in CLAUDE_CODE_TMPDIR
- * when it is set and the OS temp directory otherwise, so that one account's
- * sessions never share a tree with another's. Windows keeps <tmp>/claude.
+ * This follows Claude Code's own builds (2.1.100 source, 2.1.312 Windows,
+ * macOS and Linux binaries): the root is <base>/<name>, where <base> is
+ * CLAUDE_CODE_TMPDIR when it is set, otherwise /tmp on macOS (not the per-user
+ * $TMPDIR that os.tmpdir() returns there) and the OS temp directory elsewhere,
+ * and <name> is claude on Windows and claude-<uid> on Linux and macOS, so that
+ * one account's sessions never share a tree with another's.
  */
 function scratchRoot() {
   const env = process.env;
   if (env.CLAUDE_SCRATCH_DIR) return path.resolve(env.CLAUDE_SCRATCH_DIR);
-  if (typeof process.getuid !== 'function') return path.join(os.tmpdir(), 'claude');
-  const base = env.CLAUDE_CODE_TMPDIR ? path.resolve(env.CLAUDE_CODE_TMPDIR) : os.tmpdir();
-  return path.join(base, `claude-${process.getuid()}`);
+  const base = env.CLAUDE_CODE_TMPDIR ? path.resolve(env.CLAUDE_CODE_TMPDIR)
+    : process.platform === 'darwin' ? '/tmp' : os.tmpdir();
+  if (process.platform === 'win32') return path.join(base, 'claude');
+  return path.join(base, `claude-${process.getuid?.() ?? 0}`);
 }
 
 export const SCRATCH_ROOT = scratchRoot();

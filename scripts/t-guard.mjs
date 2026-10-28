@@ -196,24 +196,35 @@ const after = await ipc('delete:sessions', { ids: [sid] });
 ok('with the process gone the delete goes through', after[0]?.ok === true && !(await there(path.join(projDir, sid + '.jsonl'))));
 
 // ---- the scratchpad root is the one Claude Code writes ---------------------
-// Claude Code puts session scratchpads under claude-<uid> on Linux and macOS,
-// not under the shared <tmp>/claude. Read the root as a fresh process sees it.
+// Claude Code builds it as <base>/<name>: <base> is CLAUDE_CODE_TMPDIR when set,
+// else /tmp on macOS and the OS temp directory elsewhere; <name> is claude on
+// Windows and claude-<uid> on Linux and macOS. Each platform is read as a fresh
+// process sees it, with process.platform set before paths.js loads, so the
+// Windows and macOS rules are checked on every runner. The host's own temp
+// directory is pointed at a sandbox folder, so a check that passes cannot be
+// passing because the default and the expected value happen to coincide.
 const pathsUrl = new URL('../src/main/paths.js', import.meta.url).href;
-const rootWith = (env) => execFileSync(process.execPath, ['--input-type=module', '-e',
-  `import(${JSON.stringify(pathsUrl)}).then((m) => process.stdout.write(m.SCRATCH_ROOT))`],
+const rootWith = (env, platform = process.platform) => execFileSync(process.execPath, ['--input-type=module', '-e',
+  `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });
+   import(${JSON.stringify(pathsUrl)}).then((m) => process.stdout.write(m.SCRATCH_ROOT))`],
   { env: { ...process.env, CLAUDE_SCRATCH_DIR: '', CLAUDE_CODE_TMPDIR: '', ...env }, encoding: 'utf8' });
 const tmpBase = path.join(base, 'tmp');
+const ccBase = path.join(base, 'cc');
 await fs.mkdir(tmpBase, { recursive: true });
-const tmpEnv = process.platform === 'win32' ? { TEMP: tmpBase, TMP: tmpBase } : { TMPDIR: tmpBase };
-if (typeof process.getuid === 'function') {
-  const uid = process.getuid();
-  ok(`the scratchpad root is claude-${uid} in the temp directory`, rootWith(tmpEnv) === path.join(tmpBase, `claude-${uid}`));
-  ok('  and follows CLAUDE_CODE_TMPDIR as Claude Code does',
-    rootWith({ ...tmpEnv, CLAUDE_CODE_TMPDIR: path.join(base, 'cc') }) === path.join(base, 'cc', `claude-${uid}`));
-} else {
-  ok('the scratchpad root on Windows is still claude in the temp directory', rootWith(tmpEnv) === path.join(tmpBase, 'claude'));
-}
-ok('  and CLAUDE_SCRATCH_DIR still overrides it', rootWith({ ...tmpEnv, CLAUDE_SCRATCH_DIR: scratch }) === path.resolve(scratch));
+// os.tmpdir() reads TEMP and TMP or TMPDIR by the platform it believes it is on.
+const tmpEnv = { TEMP: tmpBase, TMP: tmpBase, TMPDIR: tmpBase };
+const ccEnv = { ...tmpEnv, CLAUDE_CODE_TMPDIR: ccBase };
+const uidName = `claude-${process.getuid?.() ?? 0}`;
+
+ok(`on Linux the scratchpad root is ${uidName} in the temp directory`, rootWith(tmpEnv, 'linux') === path.join(tmpBase, uidName));
+ok('  and follows CLAUDE_CODE_TMPDIR', rootWith(ccEnv, 'linux') === path.join(ccBase, uidName));
+ok(`on macOS it is ${uidName} in /tmp, not in the per-user temp directory`,
+  rootWith(tmpEnv, 'darwin') === path.join('/tmp', uidName));
+ok('  and follows CLAUDE_CODE_TMPDIR', rootWith(ccEnv, 'darwin') === path.join(ccBase, uidName));
+ok('on Windows it is claude in the temp directory', rootWith(tmpEnv, 'win32') === path.join(tmpBase, 'claude'));
+ok('  and follows CLAUDE_CODE_TMPDIR', rootWith(ccEnv, 'win32') === path.join(ccBase, 'claude'));
+ok('  and is never named after a uid, claude-0 included', !/claude-\d+$/.test(rootWith(tmpEnv, 'win32')));
+ok('CLAUDE_SCRATCH_DIR still overrides it', rootWith({ ...ccEnv, CLAUDE_SCRATCH_DIR: scratch }) === path.resolve(scratch));
 
 await fs.rm(base, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check${failures === 1 ? '' : 's'} failed` : '\nsandbox cleaned up, all checks passed');
