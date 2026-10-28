@@ -37,8 +37,19 @@ jobs:
       - name: Generate application icon
         run: npm run icon
 
-      - name: Run sandboxed tests
+      # The same sandboxed suites CI runs, so a tag cannot publish a build
+      # that skipped a check the branch had to pass.
+      - name: Trash, restore, purge and path-guard suite
         run: node scripts/t-trash.mjs
+
+      - name: Link containment and delete-time liveness suite
+        run: node scripts/t-guard.mjs
+
+      - name: Memory diagnosis and MEMORY.md repair suite
+        run: node scripts/t-memfix.mjs
+
+      - name: Scan timing and scoped-refresh correctness
+        run: node scripts/t-bench.mjs
 
       - name: Build Windows artifacts
         run: npx electron-builder --win --publish never
@@ -75,6 +86,8 @@ jobs:
             dist/*.blockmap
             dist/SHA256SUMS.txt
           body: |
+            What changed in this version: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md).
+
             ## Downloads
 
             | File | Use |
