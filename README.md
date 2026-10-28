@@ -85,7 +85,9 @@ happens only for the files that actually reached the trash. Turn it off with
 *Fix index on delete* in the Memories tab.
 
 **Scratchpads** — the working directories Claude Code gives each session under
-the OS temp folder (`<tmp>/claude/<project>/<session-id>/{scratchpad,tasks}`),
+the OS temp folder (`<tmp>/claude/<project>/<session-id>/{scratchpad,tasks}` on
+Windows, `<tmp>/claude-<uid>/...` on Linux and macOS, where `CLAUDE_CODE_TMPDIR`
+replaces `<tmp>` when set),
 which nothing ever prunes. Browse the files in place with a lazy directory tree
 and a text preview; entries whose session transcript is gone are flagged as
 orphans, and the empty husks (a directory per session that never wrote a file —

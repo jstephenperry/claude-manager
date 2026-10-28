@@ -60,11 +60,20 @@ export function decodeProjectDir(name) {
 
 /**
  * Session scratchpads and background-task output live outside ~/.claude, under
- * the OS temp directory: <tmp>/claude/<project>/<session-id>/{scratchpad,tasks}.
+ * Claude Code's temp root: <root>/<project>/<session-id>/{scratchpad,tasks}.
+ * On Linux and macOS that root is per user, claude-<uid>, in CLAUDE_CODE_TMPDIR
+ * when it is set and the OS temp directory otherwise, so that one account's
+ * sessions never share a tree with another's. Windows keeps <tmp>/claude.
  */
-export const SCRATCH_ROOT = process.env.CLAUDE_SCRATCH_DIR
-  ? path.resolve(process.env.CLAUDE_SCRATCH_DIR)
-  : path.join(os.tmpdir(), 'claude');
+function scratchRoot() {
+  const env = process.env;
+  if (env.CLAUDE_SCRATCH_DIR) return path.resolve(env.CLAUDE_SCRATCH_DIR);
+  if (typeof process.getuid !== 'function') return path.join(os.tmpdir(), 'claude');
+  const base = env.CLAUDE_CODE_TMPDIR ? path.resolve(env.CLAUDE_CODE_TMPDIR) : os.tmpdir();
+  return path.join(base, `claude-${process.getuid()}`);
+}
+
+export const SCRATCH_ROOT = scratchRoot();
 
 /**
  * The only two trees this app may ever modify. Everything destructive is
@@ -153,6 +162,7 @@ function isInsideOrAt(root, target) {
  * The scratchpad root sits in the OS temp directory, which on Linux is shared
  * by every user on the machine. It is never legitimately a link, and on POSIX
  * it must belong to us: otherwise another account decides what it contains.
+ * Claude Code refuses a claude-<uid> it does not own for the same reason.
  */
 async function assertRootSound(root) {
   if (root !== SCRATCH_ROOT) return;

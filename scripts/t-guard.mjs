@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { register } from 'node:module';
+import { execFileSync } from 'node:child_process';
 
 const base = await fs.mkdtemp(path.join(os.tmpdir(), 'cm-guard-'));
 const root = path.join(base, 'claude');
@@ -193,6 +194,26 @@ ok('  and the transcript is where it was', await there(path.join(projDir, sid + 
 await fs.rm(reg);
 const after = await ipc('delete:sessions', { ids: [sid] });
 ok('with the process gone the delete goes through', after[0]?.ok === true && !(await there(path.join(projDir, sid + '.jsonl'))));
+
+// ---- the scratchpad root is the one Claude Code writes ---------------------
+// Claude Code puts session scratchpads under claude-<uid> on Linux and macOS,
+// not under the shared <tmp>/claude. Read the root as a fresh process sees it.
+const pathsUrl = new URL('../src/main/paths.js', import.meta.url).href;
+const rootWith = (env) => execFileSync(process.execPath, ['--input-type=module', '-e',
+  `import(${JSON.stringify(pathsUrl)}).then((m) => process.stdout.write(m.SCRATCH_ROOT))`],
+  { env: { ...process.env, CLAUDE_SCRATCH_DIR: '', CLAUDE_CODE_TMPDIR: '', ...env }, encoding: 'utf8' });
+const tmpBase = path.join(base, 'tmp');
+await fs.mkdir(tmpBase, { recursive: true });
+const tmpEnv = process.platform === 'win32' ? { TEMP: tmpBase, TMP: tmpBase } : { TMPDIR: tmpBase };
+if (typeof process.getuid === 'function') {
+  const uid = process.getuid();
+  ok(`the scratchpad root is claude-${uid} in the temp directory`, rootWith(tmpEnv) === path.join(tmpBase, `claude-${uid}`));
+  ok('  and follows CLAUDE_CODE_TMPDIR as Claude Code does',
+    rootWith({ ...tmpEnv, CLAUDE_CODE_TMPDIR: path.join(base, 'cc') }) === path.join(base, 'cc', `claude-${uid}`));
+} else {
+  ok('the scratchpad root on Windows is still claude in the temp directory', rootWith(tmpEnv) === path.join(tmpBase, 'claude'));
+}
+ok('  and CLAUDE_SCRATCH_DIR still overrides it', rootWith({ ...tmpEnv, CLAUDE_SCRATCH_DIR: scratch }) === path.resolve(scratch));
 
 await fs.rm(base, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check${failures === 1 ? '' : 's'} failed` : '\nsandbox cleaned up, all checks passed');

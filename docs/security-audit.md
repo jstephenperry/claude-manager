@@ -51,7 +51,9 @@ Fix: a move is refused when any directory on the way to the item resolves outsid
 
 On Linux the root is `/tmp/claude` (`src/main/paths.js:64-66`), in a directory every account can write to, so another local user can create it first and populate it with links. A separate functional issue makes this worse: Claude Code on Linux uses `/tmp/claude-<uid>`, not `/tmp/claude` (this audit's own session ran in `/tmp/claude-0`), so on Linux the app is looking at a directory Claude Code does not use. Linux builds are not published, which is why this is rated Medium rather than High.
 
-Fix: the same link check applies to the scratchpad root, which additionally must not itself be a link and, on Linux and macOS, must belong to the current user. The root path mismatch on Linux is not fixed here.
+Fix: the same link check applies to the scratchpad root, which additionally must not itself be a link and, on Linux and macOS, must belong to the current user. On Linux and macOS the root is now `claude-<uid>` in `CLAUDE_CODE_TMPDIR` when set and the OS temp directory otherwise, which is how Claude Code 2.1.312 builds it (its bundled source joins that directory with `claude-${process.getuid?.() ?? 0}` and refuses one owned by another uid). With the default root, the app's scan on Linux now finds the sessions under `/tmp/claude-0` that it missed before.
+
+Not changed: Windows keeps `%TEMP%\claude`. The same source has no Windows branch, so on Windows it would name `claude-0`, but that was not checked on a Windows machine or against older Claude Code versions.
 
 ### 5. Low, fixed: the memory editor writes through a linked memory file, and writes any path in `~/.claude`
 
