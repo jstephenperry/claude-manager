@@ -10,7 +10,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { TRASH_DIR, isInsideTrashDir, isManagedPath } from './paths.js';
+import { TRASH_DIR, isInsideTrashDir, isManagedPath, assertManagedResolves, assertResolvesInside, trashDirIsSound } from './paths.js';
 import { readJsonSafe, writeJsonAtomic, statOrNull, movePath, measure, readDirSafe } from './util.js';
 
 const MANIFEST = path.join(TRASH_DIR, 'manifest.json');
@@ -30,6 +30,13 @@ const MANIFEST = path.join(TRASH_DIR, 'manifest.json');
  *
  * Entries that fail are kept in the file so nothing is silently discarded, but
  * they are never listed, restored, or purged.
+ *
+ * Those checks are on strings. The directories the strings pass through are
+ * checked too, before anything moves (`assertResolvesInside`), and the trash
+ * directory itself must be a real directory: a `.manager-trash` replaced by a
+ * link to the home directory would otherwise turn "Empty trash" into a
+ * recursive delete of the home directory, every name in it passing the
+ * inside-the-trash test because the test only reads the path.
  */
 const ID_RE = /^[a-z0-9]+-[0-9a-f]{8}$/;
 
@@ -49,7 +56,19 @@ function entryIsSound(e) {
   );
 }
 
+const UNSOUND_TRASH = `Refusing to use the trash: ${TRASH_DIR} is not a plain directory (it may be a link to somewhere else). Move it aside and try again.`;
+
+async function assertTrashSound() {
+  if (!(await trashDirIsSound())) throw new Error(UNSOUND_TRASH);
+}
+
 async function readManifest() {
+  // Through a link the "manifest" is whatever file the link's target holds;
+  // listing it would offer that target's contents for restore and purge.
+  if (!(await trashDirIsSound())) {
+    console.warn(`[trash] ${UNSOUND_TRASH}`);
+    return { version: 1, entries: [], rejected: [], unsound: true };
+  }
   const m = await readJsonSafe(MANIFEST, null);
   if (!m || !Array.isArray(m.entries)) return { version: 1, entries: [], rejected: [] };
   const entries = [];
@@ -62,6 +81,7 @@ async function readManifest() {
 }
 
 async function writeManifest(m) {
+  await assertTrashSound();
   await fs.mkdir(TRASH_DIR, { recursive: true });
   // Unsound entries ride along untouched: inert, but not erased behind the
   // user's back.
@@ -71,6 +91,9 @@ async function writeManifest(m) {
 /** Refuse to remove anything that is not inside the trash directory itself. */
 async function removeInsideTrash(dir) {
   if (!isInsideTrashDir(dir)) throw new Error(`Refusing to purge outside the trash directory: ${dir}`);
+  await assertTrashSound();
+  // fs.rm does not follow a link at `dir` itself, only links above it.
+  await assertResolvesInside(dir, TRASH_DIR, { finalLink: 'allow' });
   await fs.rm(dir, { recursive: true, force: true });
 }
 
@@ -91,7 +114,10 @@ export async function trashItem(item) {
     if (!isManagedPath(p)) {
       throw new Error(`Refusing to delete a path outside the managed directories: ${p}`);
     }
+    // Moving a link moves the link; what must not be a link is anything above it.
+    await assertManagedResolves(p, { finalLink: 'allow' });
   }
+  await assertTrashSound();
 
   const entryId = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
   const entryDir = path.join(TRASH_DIR, entryId);
@@ -151,6 +177,16 @@ export async function restoreEntry(id) {
   if (idx === -1) throw new Error('That trash entry no longer exists.');
   const entry = manifest.entries[idx];
 
+  // Check every path before moving any, so a planted link fails the whole
+  // restore instead of half of it. A link on the way to `from` would carry the
+  // file, whose bytes anyone who can write the trash chose, to wherever the
+  // link points: a shell profile, ~/.ssh, a startup folder.
+  await assertTrashSound();
+  for (const p of entry.paths) {
+    await assertResolvesInside(p.to, TRASH_DIR, { finalLink: 'allow' });
+    await assertManagedResolves(p.from, { finalLink: 'allow' });
+  }
+
   const restored = [];
   const skipped = [];
   for (const p of entry.paths) {
@@ -189,6 +225,7 @@ export async function purgeEntry(id) {
 }
 
 export async function purgeAll() {
+  await assertTrashSound();
   const manifest = await readManifest();
   let bytes = 0;
   for (const e of manifest.entries) {

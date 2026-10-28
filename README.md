@@ -85,7 +85,9 @@ happens only for the files that actually reached the trash. Turn it off with
 *Fix index on delete* in the Memories tab.
 
 **Scratchpads** — the working directories Claude Code gives each session under
-the OS temp folder (`<tmp>/claude/<project>/<session-id>/{scratchpad,tasks}`),
+the OS temp folder (`<tmp>/claude/<project>/<session-id>/{scratchpad,tasks}` on
+Windows, `<tmp>/claude-<uid>/...` on Linux, `/tmp/claude-<uid>/...` on macOS,
+where `CLAUDE_CODE_TMPDIR` replaces the temp folder on every platform when set),
 which nothing ever prunes. Browse the files in place with a lazy directory tree
 and a text preview; entries whose session transcript is gone are flagged as
 orphans, and the empty husks (a directory per session that never wrote a file —
@@ -123,16 +125,28 @@ The app may modify exactly two trees — `~/.claude` and the scratchpad root —
 declared as `MANAGED_ROOTS` in `paths.js`. Adding a third is a deliberate,
 visible edit rather than something a path bug can cause.
 
-Three safeguards:
+Four safeguards:
 
 - **Live sessions are hard-blocked.** `~/.claude/sessions/*.json` is a registry
   of running Claude Code processes; the app checks the pid is alive and refuses
   to delete that session or its project. Deleting a transcript out from under a
-  running session corrupts it.
+  running session corrupts it. The registry is read again when a delete or
+  sweep executes, not taken from the last scan, so a session resumed after the
+  window opened is still refused, and so is anything whose path names it: its
+  file history, session env and scratchpad.
 - **Every path is checked against the managed roots** before it is touched. A
   bug in path resolution fails loudly instead of deleting something elsewhere.
   The sweep re-checks liveness at execution time too, because a plan is a
   snapshot and a session may have started since it was built.
+- **Links cannot lead out.** A string check says nothing about where the
+  filesystem takes a path: a directory inside `~/.claude` can be a junction or
+  symlink to anywhere, and making one needs no privilege. Before anything is
+  moved, restored, purged or written, the directories on the way to it are
+  resolved and must still be inside the root. The trash directory must be a
+  plain directory, the scratchpad root must not be a link (and on Linux and
+  macOS must belong to you), and the memory editor writes only
+  `projects/*/memory/*.md` files that are not themselves links. Moving a link
+  moves the link, so a link as the item being deleted is fine.
 - **A session is not one file.** Deleting one takes its transcript, its
   `tool-results/` and `subagents/` sidecar directory, and its `file-history/`
   and `session-env/` entries — all listed in the confirmation dialog.
@@ -267,6 +281,7 @@ git push --follow-tags
 
 ```
 node scripts/t-trash.mjs    # delete/restore/purge/conflict/guard, in a temp sandbox
+node scripts/t-guard.mjs    # planted links and delete-time liveness, through the IPC handlers
 node scripts/t-mem.mjs      # frontmatter, index, and issue detection on real data
 node scripts/t-memfix.mjs   # orphaned-link diagnosis and MEMORY.md repair, in a temp sandbox
 node scripts/t-bench.mjs    # scan timings on your own tree, and scoped-refresh correctness

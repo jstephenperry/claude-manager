@@ -15,6 +15,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { readDirSafe, statOrNull, measure } from './util.js';
+import { PROJECTS_DIR, assertResolvesInside, isMemoryFilePath } from './paths.js';
 
 const INDEX_FILE = 'MEMORY.md';
 
@@ -475,6 +476,14 @@ function diagnose(files, index, knownSessionIds, memoryDir) {
 }
 
 /** Rewrite a memory file's contents in place. */
+/**
+ * The editor writes memory files and nothing else. A memory that is a link
+ * would put the edit wherever the link points. A path outside a memory
+ * directory, such as ~/.claude/settings.json whose hooks run commands, is not
+ * something a memory editor has any business writing.
+ */
 export async function writeMemory(filePath, text) {
+  if (!isMemoryFilePath(filePath)) throw new Error(`Refusing to write a file that is not a memory: ${filePath}`);
+  await assertResolvesInside(filePath, PROJECTS_DIR, { finalLink: 'refuse' });
   await fs.writeFile(filePath, text, 'utf8');
 }

@@ -1,7 +1,7 @@
 {
   "name": "claude-manager",
   "productName": "Claude Manager",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Browse and clean up Claude Code's local data — session transcripts, project memories, scratchpads, and the storage that accumulates under ~/.claude",
   "type": "module",
   "main": "src/main/main.js",
@@ -28,14 +28,14 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "icon": "node scripts/make-icon.mjs",
-    "test": "node scripts/t-trash.mjs && node scripts/t-sweep.mjs && node scripts/t-memfix.mjs && node scripts/t-bench.mjs",
+    "test": "node scripts/t-trash.mjs && node scripts/t-guard.mjs && node scripts/t-sweep.mjs && node scripts/t-memfix.mjs && node scripts/t-bench.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win",
     "release": "electron-builder --win --publish always"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "dev.stephenperry.claude-manager",

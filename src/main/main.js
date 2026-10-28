@@ -25,9 +25,16 @@ function createWindow() {
       preload: path.join(__dirname, '..', 'preload', 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
+
+  // The preload bridge is attached to this webContents, not to index.html, so
+  // any page the window navigates to inherits window.api, with its deletes,
+  // purges and shell.openPath. The app never navigates; a file dropped onto the
+  // window would, by Electron's default. Refuse both ways off the page.
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   if (isDev) win.webContents.openDevTools({ mode: 'detach' });
